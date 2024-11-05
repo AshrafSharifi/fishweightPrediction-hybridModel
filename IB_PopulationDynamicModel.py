@@ -136,8 +136,9 @@ for _,time_row in df_timeWindow.iterrows():
     print(f"RMSE (Mean Weights): {rmse_mean}")
     print(f"RMSE (Standard Deviation): {rmse_std}")
 
-with open(root + 'results/dynamic_individual_weight.pkl', 'wb') as file:
-    pickle.dump(dynamic_weight, file)
+print('done')
+# with open(root + 'results/dynamic_individual_weight.pkl', 'wb') as file:
+#     pickle.dump(dynamic_weight, file)
     
     
     

@@ -70,7 +70,7 @@ for _,time_row in df_timeWindow.iterrows():
     dynamic_weight[time_row_index] = my_dict
     time_row_index += 1
     print(time_row_index)
-
+print('done')
 # with open(root + 'results/dynamic_individual_weight.pkl', 'wb') as file:
 #     pickle.dump(dynamic_weight, file)
     
