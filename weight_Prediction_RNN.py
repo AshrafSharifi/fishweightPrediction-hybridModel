@@ -18,30 +18,37 @@ from ModelClass import *
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import mean_squared_error, mean_absolute_error, mean_absolute_percentage_error
-
+from sklearn.model_selection import KFold
 
 @dataclass
 class Args:
     # "LSTM" "LSTM_CNN" "CNN_LSTM" "Parrarel_CNN_LSTM" "Random_Forest"
-    prediction_Method ="Random_Forest" 
+    # 3_LSTM_CNN_WithoutTransform_WithTime_(2024-11-06_11_14_40)
+    prediction_Method:str ="LSTM_CNN" 
+    
     if prediction_Method!="Random_Forest":
         verbos= 0
         epochs: int= 200
         batch_size: int= 32
         validation_split: float= 0.2
-        timesteps: int= 3
-        patience: int= 10 
+        timesteps: int= 1
+        patience: int= 10
         dropout: float= 0.2 
-        learning_rate: float= 0.001  
+        learning_rate: float= 0.001 
+        n_splits= 5
+        verbose= 0
+        scale_flag: bool() = True
+        transformFlag: bool() = True
     else:
         max_depth: int= 10
         min_samples_leaf: int= 5
         min_samples_split: int= 5
         n_estimators: int= 1000
         random_state: int= 23
-        
-    transformFlag: bool() = True
-    scale_flag = True
+        scale_flag: bool() = False 
+        transformFlag: bool() = False 
+    
+    
     withTime: bool() = True
     reducedFeature: bool() = False    
     root = 'data/Preore_Dataset/'
@@ -51,7 +58,7 @@ class Args:
     feature_names = []
     # Scalers
     scaler_x = MinMaxScaler()
-    scaler_y = MinMaxScaler()
+
     
     
 
@@ -92,7 +99,7 @@ def prepare_data(args,data):
     data = data.drop(["PREORE_VAKI-Length [mm]"], axis=1)
     data = data.drop(["PREORE_VAKI-CF"], axis=1)
     
-    
+    Entrance_timestamp = data['Entrance_timestamp'].copy()
     if args.withTime:
         data['year'] = data['Entrance_timestamp'].dt.year
         data['month'] = data['Entrance_timestamp'].dt.month
@@ -106,20 +113,47 @@ def prepare_data(args,data):
         data = data.drop(["Catabolic_component(C)"], axis=1)
         data = data.drop(["Somatic_tissue_energy_content(Epsilon)"], axis=1)
         # data = data.drop(["PREORE_VAKI-Length [mm]"], axis=1)
-        
     
-    x = data.drop(columns=["PREORE_VAKI-Weight [g]"])
+    data_out = data.copy() # data contained Fish_weight
     y = data["PREORE_VAKI-Weight [g]"].values
+    x = data.drop(columns=["PREORE_VAKI-Weight [g]"])
+    x = data.drop(columns=["Fish_Weight"])
     
-    fish_weight_col_indx = x.columns.get_loc('Fish_Weight')
+    
     if args.transformFlag:
-        y = np.log1p(data["PREORE_VAKI-Weight [g]"].values)  # Use log1p for stability        
-    # Apply scaling
-    x = args.scaler_x.fit_transform(x)
-    y = args.scaler_y.fit_transform(y.reshape(-1, 1))
-    return x, y, data, fish_weight_col_indx
+        y = np.log1p(y)  # Use log1p for stability        
 
-def compute_metrics(predicted_values,actual_values,writer=None):
+    if args.scale_flag:
+        x = args.scaler_x.fit_transform(x)
+    
+  
+
+    return x, y, data
+
+def split_data(x,y,data_contained_fishWeight):
+    # Step 1: Train-Test Split
+    indices = np.arange(len(x))
+    x_train, x_test, y_train, y_test, idx_train, idx_test = train_test_split(
+        x, y, indices, test_size=0.2, random_state=23)
+    
+    original_x_test = x_test.copy()
+    original_y_test = y_test.copy()
+    
+    # Step 2: Reshape to sequences after train-test split
+    samples_train = int(x_train.shape[0] / args.timesteps)
+    x_train = x_train[:samples_train * args.timesteps].reshape(samples_train, args.timesteps, x_train.shape[1])
+    y_train = y_train[:samples_train * args.timesteps].reshape(samples_train, args.timesteps)
+    
+    samples_test = int(x_test.shape[0] / args.timesteps)
+    x_test = x_test[:samples_test * args.timesteps].reshape(samples_test, args.timesteps, x_test.shape[1])
+    y_test = y_test[:samples_test * args.timesteps].reshape(samples_test, args.timesteps)
+    
+    # Step 3: If you need to get back to the original 'Fish_Weight' values
+    Fish_Weight_Predictedby_Math_model = np.array(data_contained_fishWeight.iloc[idx_test]["Fish_Weight"]).reshape(-1,1)
+    data = data_contained_fishWeight.drop(columns=["Fish_Weight"])
+    return x_train, x_test, y_train, y_test,data, Fish_Weight_Predictedby_Math_model, original_x_test, original_y_test
+
+def compute_metrics(predicted_values,actual_values):
     # Calculate loss, MSE, MAE, and MAPE
     mse = np.mean((predicted_values - actual_values) ** 2)
     mae = np.mean(np.abs(predicted_values - actual_values))
@@ -129,40 +163,39 @@ def compute_metrics(predicted_values,actual_values,writer=None):
     print(f"MSE: {mse}")
     print(f"MAE: {mae}")
     print(f"MAPE: {mape}%")
-    
-    if writer != None:
-        writer.add_text("2: Evaluation metrics using model.predict on actual data",
-        "|Test Metric|Value|\n|-|-|\n%s" % ("\n".join([
-            f"|MAPE|{mape}|",
-            f"|MAE|{mae}|",
-            f"|MSE|{mse}|"
-        ])))
+    return mse,mae,mape
+
     
   
-def corr_matrix(data,writer):
+def corr_matrix(data, writer):
     # Compute the correlation matrix
     correMtr = data.corr()
     mask = np.array(correMtr)
-    mask[np.tril_indices_from(mask)] = False # the correlation matrix is symmetric
-    # Heat map for correlation matrix
-    fig,ax = plt.subplots(figsize=(16,16))
-    sns.set_style("white")
-    sns.heatmap(correMtr,mask=mask,vmin=-1.0,vmax=1.0,square=True,annot=True,fmt="0.2f",ax=ax)
-    ax.set_title('Correlation matrix of attributes')
-    plt.show()
-    
-    writer.add_figure("Correlation Matrix", fig)
+    mask[np.tril_indices_from(mask)] = False  # the correlation matrix is symmetric
+
+    # Prepare the weight correlations for the bar chart
     weight_corr = correMtr['PREORE_VAKI-Weight [g]'].drop('PREORE_VAKI-Weight [g]').sort_values()
 
-    # Plot as a vertical bar chart
-    fig,ax = plt.subplots(figsize=(8, 10))
-    sns.barplot(y=weight_corr.index, x=weight_corr.values, hue=weight_corr.index, legend=False)
-    plt.xlabel("Correlation with PREORE_VAKI-Weight [g]")
-    plt.ylabel("Features")
-    plt.title("Correlation of Features with PREORE_VAKI-Weight [g]")
+    # Create a figure with 2 subplots (1x2 grid)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(24, 10))
+    
+    # Plot the correlation heatmap on the first axis
+    sns.set_style("white")
+    sns.heatmap(correMtr, mask=mask, vmin=-1.0, vmax=1.0, square=True, annot=True, fmt=".2f", ax=ax1)
+    ax1.set_title('Correlation matrix of attributes')
+    
+    # Plot the vertical bar chart on the second axis
+    sns.barplot(y=weight_corr.index, x=weight_corr.values,hue=weight_corr.index, legend=False, ax=ax2)
+    ax2.set_xlabel("Correlation with PREORE_VAKI-Weight [g]")
+    ax2.set_ylabel("Features")
+    ax2.set_title("Correlation of Features with PREORE_VAKI-Weight [g]")
+    
+    # Adjust layout and show the figure
+    plt.tight_layout()
     plt.show()
-    writer.add_figure("Correlation Vector of PREORE_VAKI-Weight", fig)
-    # Heat map for correlation matrix
+    
+    # Log the combined figure to TensorBoard
+    writer.add_figure("Combined Correlation Plots", fig)
 
 def train_random_forest(args, data):
     writer = SummaryWriter(args.path)
@@ -174,6 +207,8 @@ def train_random_forest(args, data):
     x, y, data, fishweight_col_indx = prepare_data(args, data)
     x = np.array(x)
     y = np.array(y)
+    
+    
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=23)
     
     x_test_contained_fishWeight = x_test.copy()
@@ -190,60 +225,191 @@ def train_random_forest(args, data):
         random_state=args.random_state
     )
     best_rf.fit(x_train, y_train.ravel())
-    rf_pred = best_rf.predict(x_test)
+    y_pred = best_rf.predict(x_test)
+    actual_value = y_test
+    Fish_Weight_Predictedby_Math_model = x_test_contained_fishWeight[:,fishweight_col_indx]
+    Fish_Weight_Predictedby_Math_model = Fish_Weight_Predictedby_Math_model.reshape(-1, 1)
+    if args.transformFlag and args.scale_flag:
+        y_pred = np.expm1(args.scaler_y.inverse_transform(y_pred.reshape(-1, 1)))
+        actual_value = np.expm1(args.scaler_y.inverse_transform(y_test))
+        Fish_Weight_Predictedby_Math_model = args.scaler_x.inverse_transform(x_test_contained_fishWeight)[:,fishweight_col_indx]
+        Fish_Weight_Predictedby_Math_model = Fish_Weight_Predictedby_Math_model.reshape(-1, 1)
+    elif args.transformFlag==False and args.scale_flag:
+        y_pred = args.scaler_y.inverse_transform(y_pred.reshape(-1, 1))
+        actual_value = args.scaler_y.inverse_transform(y_test)
+        Fish_Weight_Predictedby_Math_model = args.scaler_x.inverse_transform(x_test_contained_fishWeight)[:,fishweight_col_indx]
+        
+    elif args.transformFlag==True and args.scale_flag==False:
+        y_pred = np.expm1(y_pred.reshape(-1, 1))
+        actual_value = np.expm1(y_test).reshape(-1, 1)
+        
     
-    # Scale back predictions if required
-    # if args.transformFlag:
-    #     rf_pred = np.expm1(args.scaler_y.inverse_transform(rf_pred.reshape(-1, 1)))
-    #     y_test = np.expm1(args.scaler_y.inverse_transform(y_test.reshape(-1, 1)))
-    # else:
-    #     rf_pred = args.scaler_y.inverse_transform(rf_pred.reshape(-1, 1))
-    #     y_test = args.scaler_y.inverse_transform(y_test.reshape(-1, 1))
+            
+            
+    y_pred = y_pred.reshape(-1, 1) 
+    Fish_Weight_Predictedby_Math_model = Fish_Weight_Predictedby_Math_model.reshape(-1, 1)
+    actual_value = actual_value.reshape(-1, 1) 
+    mse1,mae1,mape1= compute_metrics(np.array(y_pred), np.array(actual_value))
+    
 
     # Compute and log evaluation metrics
-    mse = mean_squared_error(y_test, rf_pred)
-    mae = mean_absolute_error(y_test, rf_pred)
-    mape = mean_absolute_percentage_error(y_test, rf_pred) * 100
+    mse = mean_squared_error(actual_value, y_pred)
+    mae = mean_absolute_error(actual_value, y_pred)
+    mape = mean_absolute_percentage_error(actual_value, y_pred) * 100
     print(f"Random Forest MSE: {mse}")
     print(f"Random Forest MAE: {mae}")
     print(f"Random Forest MAPE: {mape}%")
-    # Log results to TensorBoard
-    writer.add_text("Random Forest Model Performance", 
-                    f"|Metric|Value|\n|-|-|\n|MSE|{mse}|\n|MAE|{mae}|\n|MAPE|{mape}%|")
+    
    
     feature_table = "|Features|\n|-|\n"
     feature_table += "\n".join([f"|{name}|" for name in data.columns])
     writer.add_text("4: Feature Names", feature_table)
     if args.displayCorrMatrix:
         corr_matrix(data,writer)
-    plots = Custom_plots(rf_pred, y_test,writer)
-    plots.plot_actual_vs_predicted_scatter()
-    plots.plot_predictions()
-    plots.plot_predictions_with_hist()
-    plots.plot_residuals()
+    plots = Custom_plots(y_pred, actual_value,writer)
+    plots.plot_all()
+
+    
+    
+    # Add data related to method which is based on mathematical model
+
+    
+    mse2,mae2,mape2= compute_metrics(np.array(Fish_Weight_Predictedby_Math_model), np.array(actual_value))
+    table_header = f"| Metric | {args.prediction_Method} | Method based on mathematical model |\n|-|-|-|"
+    table_rows = f"| MSE   | {mse:.4f} | {mse2:.4f} |\n"
+    table_rows += f"| MAE   | {mae:.4f} | {mae2:.4f} |\n"
+    table_rows += f"| MAPE  | {mape:.4f} | {mape2:.4f} |"
+    table = f"{table_header}\n{table_rows}"
+    writer.add_text("1: Metrics Comparison", table)
+    
+    plots = Custom_plots(Fish_Weight_Predictedby_Math_model, np.array(actual_value),writer)
+    plots.plot_all()
     writer.close()
 
 
-def train(args, data):
+
+
+def train_fold(args, data):
     writer = SummaryWriter(args.path)
     writer.add_text(
-        "3: Hyperparameters",
-        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
-    )
-    x, y, data, fishweight_col_indx = prepare_data(args, data)
+        "2: Hyperparameters",
+        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),)
+    x, y, data_contained_fishWeight = prepare_data(args, data)
     samples = int(x.shape[0] / args.timesteps)
     x = np.array(x)
     y = np.array(y)
     x = x[:samples * args.timesteps].reshape(samples, args.timesteps, x.shape[1])
     y = y[:samples * args.timesteps].reshape(samples, args.timesteps)
     
-    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=23)
-    x_test_contained_fishWeight = x_test.copy()
-    x_test = np.delete(x_test, fishweight_col_indx, axis=2)
-    x_train = np.delete(x_train, fishweight_col_indx, axis=2)
-    data = data.drop(columns=["Fish_Weight"])
+    # Initialize KFold
+    kfold = KFold(n_splits=args.n_splits, shuffle=True, random_state=23)
     
-    modelClass = ModelClass(args.timesteps, x.shape[2]-1, args.dropout, args.learning_rate)
+    fold_metrics = {"mse": [],"mae": [],"mape": []}
+   
+    for fold, (train_index, val_index) in enumerate(kfold.split(x)):
+        print(f"Training fold {fold + 1}/{args.n_splits}")
+    
+        # Split data into train and validation based on KFold
+        x_train, x_val = x[train_index], x[val_index]
+        y_train, y_val = y[train_index], y[val_index]
+        
+        # Remove fishweight column if required
+        x_val_contained_fishWeight = data_contained_fishWeight[:,val_index]
+        
+        
+        # Initialize and compile model
+        modelClass = ModelClass(args.timesteps, x.shape[2]-1, args.dropout, args.learning_rate)
+        
+        if args.prediction_Method=="LSTM":
+            model = modelClass.create_LSTM()
+        elif args.prediction_Method=="LSTM_CNN":
+            model = modelClass.create_lstm_cnn_model()
+        elif args.prediction_Method=="CNN_LSTM":
+            model = modelClass.create_cnn_lstm_model()
+        else:
+            model = modelClass.create_parallel_cnn_lstm_model()
+        
+        # Define callbacks
+        # checkpointer = ModelCheckpoint(filepath=f"{args.model_file}_fold{fold+1}", save_best_only=True)
+        early_stopping = EarlyStopping(monitor='val_loss', patience=args.patience, restore_best_weights=True)
+        
+        # Train model on this fold
+        history = model.fit(
+            x_train, y_train, epochs=args.epochs, batch_size=args.batch_size,
+            validation_data=(x_val, y_val), callbacks=[early_stopping], verbose=args.verbose
+        )
+        
+        # Evaluate the model on validation set for this fold
+        val_loss, val_mse, val_mae, val_mape = model.evaluate(x_val, y_val, verbose=0)
+
+        # Predictions vs Actual values plot
+        original_x_test = x_val.reshape(-1, x_val.shape[2])
+        original_y_test = y_val.reshape(-1)
+        
+        x_reshaped = x_val_contained_fishWeight.reshape(-1, x_val_contained_fishWeight.shape[2])
+        Fish_Weight_Predictedby_Math_model = args.scaler_x.inverse_transform(x_reshaped)[:,fishweight_col_indx]
+        
+        predicted_values = []
+        actual_values = []
+        for j in range(len(original_y_test)):
+            sample_reshaped = np.tile(original_x_test[j], (1, args.timesteps, 1))
+            y_pred = model.predict(sample_reshaped)
+            
+            if args.transformFlag:
+                y_pred = np.expm1(args.scaler_y.inverse_transform(y_pred))[0][0]
+                actual_value = np.expm1(args.scaler_y.inverse_transform([[original_y_test[j]]]))[0][0]
+            else:
+                y_pred = args.scaler_y.inverse_transform(y_pred)[0][0]
+                actual_value = args.scaler_y.inverse_transform([[original_y_test[j]]])[0][0]
+            
+            predicted_values.append(y_pred)
+            actual_values.append(actual_value)
+        mse1,mae1,mape1= compute_metrics(np.array(predicted_values), np.array(actual_values))
+        fold_metrics["mse"].append(mse1)
+        fold_metrics["mae"].append(mae1)
+        fold_metrics["mape"].append(mape1)
+        # plots = Custom_plots(np.array(predicted_values), np.array(actual_values),writer)
+        # plots.plot_all()
+    
+    feature_table = "|Features|\n|-|\n"
+    feature_table += "\n".join([f"|{name}|" for name in data.columns])
+    writer.add_text("3: Feature Names", feature_table)
+
+
+    
+
+    print("*****************************************************************************************")    
+    mse2,mae2,mape2= compute_metrics(Fish_Weight_Predictedby_Math_model, np.array(actual_values))
+    mse1= np.mean(fold_metrics["mse"])
+    mae1= np.mean(fold_metrics["mae"])
+    mape1= np.mean(fold_metrics["mape"])
+    table_header = f"| Metric | {args.prediction_Method} | Method based on mathematical model |\n|-|-|-|"
+    table_rows = f"| MSE   | {mse1:.4f} | {mse2:.4f} |\n"
+    table_rows += f"| MAE   | {mae1:.4f} | {mae2:.4f} |\n"
+    table_rows += f"| MAPE  | {mape1:.4f} | {mape2:.4f} |"
+    table = f"{table_header}\n{table_rows}"
+    writer.add_text("1: Metrics Comparison", table)
+    
+   
+    writer.close()
+
+
+def train(args, data):
+    writer = SummaryWriter(args.path)
+    writer.add_text(
+        "2: Hyperparameters",
+        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
+    )
+    feature_table = "|Features|\n|-|\n"
+    feature_table += "\n".join([f"|{name}|" for name in data.columns])
+    writer.add_text("3: Feature Names", feature_table)
+    
+    x, y, data_contained_fishWeight = prepare_data(args, data)
+    x_train, x_test, y_train, y_test,data,Fish_Weight_Predictedby_Math_model, original_x_test, original_y_test= split_data( x, y, data_contained_fishWeight)
+                                                                        
+    modelClass = ModelClass(args.timesteps, x_train.shape[2], args.dropout, args.learning_rate)
+
+    
     model = modelClass.create_LSTM()
     checkpointer = ModelCheckpoint(filepath=args.model_file, save_best_only=True)
     early_stopping = EarlyStopping(monitor='val_loss', patience=args.patience, restore_best_weights=True)
@@ -266,61 +432,44 @@ def train(args, data):
     
     # Final evaluation and predictions
     test_results = model.evaluate(x_test, y_test)
-    print(f"Test MAPE: {test_results[1]}")
-    print(f"Test MAE: {test_results[2]}")
-    print(f"Test MSE: {test_results[3]}")
-    writer.add_text("1: Evaluation metrics using model.evaluate",
-    "|Test Metric|Value|\n|-|-|\n%s" % ("\n".join([
-        f"|MAPE|{test_results[1]}|",
-        f"|MAE|{test_results[2]}|",
-        f"|MSE|{test_results[3]}|"
-    ])))
-    
-    # Predictions vs Actual values plot
-    original_x_test = x_test.reshape(-1, x_test.shape[2])
-    original_y_test = y_test.reshape(-1)
-    
-    x_reshaped = x_test_contained_fishWeight.reshape(-1, x_test_contained_fishWeight.shape[2])
-    Fish_Weight_Predictedby_Math_model = args.scaler_x.inverse_transform(x_reshaped)[:,fishweight_col_indx]
-    
+
+
     predicted_values = []
     actual_values = []
     for j in range(len(original_y_test)):
         sample_reshaped = np.tile(original_x_test[j], (1, args.timesteps, 1))
         y_pred = model.predict(sample_reshaped)
-        
         if args.transformFlag:
-            y_pred = np.expm1(args.scaler_y.inverse_transform(y_pred))[0][0]
-            actual_value = np.expm1(args.scaler_y.inverse_transform([[original_y_test[j]]]))[0][0]
+            y_pred = np.expm1(y_pred)[0][0]
+            actual_value = np.expm1([[original_y_test[j]]])[0][0]
         else:
-            y_pred = args.scaler_y.inverse_transform(y_pred)[0][0]
-            actual_value = args.scaler_y.inverse_transform([[original_y_test[j]]])[0][0]
+            y_pred = y_pred[0][0]
+            actual_value = original_y_test[j]
         
         predicted_values.append(y_pred)
         actual_values.append(actual_value)
-    compute_metrics(np.array(predicted_values), np.array(actual_values),writer)
+    mse1,mae1,mape1= compute_metrics(np.array(predicted_values), np.array(actual_values))
     
     plots = Custom_plots(np.array(predicted_values), np.array(actual_values),writer)
-    plots.plot_actual_vs_predicted_scatter()
-    plots.plot_predictions()
-    plots.plot_predictions_with_hist()
-    plots.plot_residuals()
-    
-    feature_table = "|Features|\n|-|\n"
-    feature_table += "\n".join([f"|{name}|" for name in data.columns])
-    writer.add_text("4: Feature Names", feature_table)
-
+    plots.plot_all()
     plt.close(fig)
-    writer.close()
+    
     if args.displayCorrMatrix:
         corr_matrix(data,writer)
-        
-    compute_metrics(Fish_Weight_Predictedby_Math_model, np.array(actual_values))
-    plots = Custom_plots(np.array(Fish_Weight_Predictedby_Math_model), np.array(actual_values),writer)
-    plots.plot_actual_vs_predicted_scatter()
-    plots.plot_predictions()
-    plots.plot_predictions_with_hist()
-    plots.plot_residuals()
+    print("*****************************************************************************************")  
+    Fish_Weight_Predictedby_Math_model= np.array(Fish_Weight_Predictedby_Math_model).reshape(-1,1)
+    actual_values = np.array(actual_values).reshape(-1,1)
+    mse2,mae2,mape2= compute_metrics(Fish_Weight_Predictedby_Math_model, np.array(actual_values))
+    table_header = f"| Metric | {args.prediction_Method} | Method based on mathematical model |\n|-|-|-|"
+    table_rows = f"| MSE   | {mse1:.4f} | {mse2:.4f} |\n"
+    table_rows += f"| MAE   | {mae1:.4f} | {mae2:.4f} |\n"
+    table_rows += f"| MAPE  | {mape1:.4f} | {mape2:.4f} |"
+    table = f"{table_header}\n{table_rows}"
+    writer.add_text("1: Metrics Comparison", table)
+    plots = Custom_plots(np.array(Fish_Weight_Predictedby_Math_model), np.array(actual_values),writer,"Method based on mathematical model_")
+    plots.plot_all()
+    plt.close(fig)
+    writer.close()
         
 if __name__ == "__main__":
     args = tyro.cli(Args)
@@ -347,6 +496,11 @@ if __name__ == "__main__":
         else:
             run_name += "WithoutTime_"
             
+        if args.scale_flag:
+            run_name += "WithScaling_"
+        else:
+            run_name += "WithoutScaling_"
+            
         run_name += f"({formatted_datetime})"
 
         if args.prediction_Method=="Random_Forest":
@@ -354,7 +508,7 @@ if __name__ == "__main__":
             args.path = f"data/Runs/{run_name}"
             train_random_forest(args, data_all)
         else:
-            run_name = str(args.timesteps)+"_"+args.prediction_Method
+            run_name = str(args.timesteps)+"_"+args.prediction_Method + "_" + run_name
             args.path = f"data/Runs/{run_name}"
             args.model_file = args.path + '/fish_weight_prediction_model.hdf5'
             train(args,data_all)

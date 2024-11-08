@@ -35,27 +35,27 @@ class ModelClass:
         # utils.plot_model(model, to_file="data/models/lstm.pdf", show_shapes=True)
         return model
     
-    def create_lstm_cnn_model(self,dropout_rate=0.2, l2_rate=0.00001):
+    def create_lstm_cnn_model(self):
         # Input layer
         input_layer = Input(shape=(self.timesteps, self.feature_size))
         # LSTM layers
         lstm1 = Bidirectional(LSTM(units=256, return_sequences=True))(input_layer)
-        dropout1 = Dropout(dropout_rate)(lstm1)
+        dropout1 = Dropout(self.dropout)(lstm1)
         lstm2 = Bidirectional(LSTM(units=128, return_sequences=True))(dropout1)
-        dropout2 = Dropout(dropout_rate)(lstm2)
+        dropout2 = Dropout(self.dropout)(lstm2)
         lstm3 = Bidirectional(LSTM(units=64, return_sequences=True))(dropout2)
-        dropout3 = Dropout(dropout_rate)(lstm3)
+        dropout3 = Dropout(self.dropout)(lstm3)
         # Reshape the LSTM output to match the input requirements of Conv1D
         reshape = Reshape((self.timesteps, 128))(dropout3)
         # First Conv1D + ReLU
-        conv1 = Conv1D(filters=64, kernel_size=3, strides=1, padding='same', kernel_regularizer=l2(l2_rate))(reshape)
+        conv1 = Conv1D(filters=64, kernel_size=3, strides=1, padding='same', kernel_regularizer=l2(self.learning_rate))(reshape)
         relu1 = ReLU()(conv1)
         conv2 = Conv1D(filters=10, kernel_size=3, strides=1, padding='same')(relu1)
         relu2 = ReLU()(conv2)
         # Flatten the output
         flatten = Reshape((self.timesteps * 10,))(relu2)
         # Output layer
-        output = Dense(units=1, kernel_regularizer=l2(l2_rate))(flatten)
+        output = Dense(units=1, kernel_regularizer=l2(self.learning_rate))(flatten)
         # Create the model
         model = Model(inputs=input_layer, outputs=output)
         # Compile the model
@@ -63,15 +63,15 @@ class ModelClass:
         model.compile(optimizer=custom_optimizer, loss='mean_squared_error', metrics=['mape', 'mae', 'mse'])
         # Print the model summary to check the shapes
         # model.summary()
-        model.build((None, self.timesteps, self.feature_size))  # Here, you specify the input shape
+        # model.build((None, self.timesteps, self.feature_size))  # Here, you specify the input shape
         # utils.plot_model(model, to_file="data/models/lstm_cnn.pdf", show_shapes=True)
         return model
     
-    def create_cnn_lstm_model(self,dropout_rate=0.2, l2_rate=0.00001):
+    def create_cnn_lstm_model(self):
         # Input layer
         input_layer = Input(shape=(self.timesteps, self.feature_size))
         # First Conv1D + ReLU
-        conv1 = Conv1D(filters=64, kernel_size=3, strides=1, padding='same', kernel_regularizer=l2(l2_rate))(input_layer)
+        conv1 = Conv1D(filters=64, kernel_size=3, strides=1, padding='same', kernel_regularizer=l2(self.learning_rate))(input_layer)
         relu1 = ReLU()(conv1)
         # Third Conv1D + ReLU (output channels match input channels)
         conv2 = Conv1D(filters=self.feature_size, kernel_size=3, strides=1, padding='same')(relu1)
@@ -85,18 +85,18 @@ class ModelClass:
         lstm3 = Bidirectional(LSTM(units=64, return_sequences=False))(dropout2)
         dropout3 = Dropout(self.dropout)(lstm3)
         # Output layer
-        output = Dense(units=1, kernel_regularizer=l2(l2_rate))(dropout3)
+        output = Dense(units=1, kernel_regularizer=l2(self.learning_rate))(dropout3)
         # Create the model
         model = Model(inputs=input_layer, outputs=output)
         custom_optimizer = Adam(learning_rate=self.learning_rate)
         model.compile(optimizer=custom_optimizer, loss='mean_squared_error', metrics=['mape', 'mae', 'mse'])
         # Print the model summary to check the shapes
         # model.summary()
-        model.build((None, self.timesteps, self.feature_size))  # Here, you specify the input shape
+        # model.build((None, self.timesteps, self.feature_size))  # Here, you specify the input shape
         # utils.plot_model(model, to_file="data/models/cnn_lstm.pdf", show_shapes=True)
         return model
     
-    def create_parallel_cnn_lstm_model(self,l2_rate=0.00001):
+    def create_parallel_cnn_lstm_model(self):
         # Input layer
         input_layer = Input(shape=(self.timesteps, self.feature_size))
         # LSTM branch
@@ -108,15 +108,15 @@ class ModelClass:
         lstm_branch = Dropout(self.dropout)(lstm_branch)
         lstm_branch = Dense(64, activation='relu')(lstm_branch)
         # CNN branch
-        cnn_branch = Conv1D(filters=64, kernel_size=3, strides=1, padding='same', kernel_regularizer=l2(l2_rate))(input_layer)
+        cnn_branch = Conv1D(filters=64, kernel_size=3, strides=1, padding='same', kernel_regularizer=l2(self.learning_rate))(input_layer)
         cnn_branch = ReLU()(cnn_branch)
-        cnn_branch = Conv1D(filters=64, kernel_size=3, strides=1, padding='same', kernel_regularizer=l2(l2_rate))(cnn_branch)
+        cnn_branch = Conv1D(filters=64, kernel_size=3, strides=1, padding='same', kernel_regularizer=l2(self.learning_rate))(cnn_branch)
         cnn_branch = ReLU()(cnn_branch)
         cnn_branch = Flatten()(cnn_branch)
         # Concatenate CNN and LSTM branches
         concatenated = Concatenate()([cnn_branch, lstm_branch])        
         # Final Dense layer
-        output = Dense(units=1, kernel_regularizer=l2(l2_rate))(concatenated)        
+        output = Dense(units=1, kernel_regularizer=l2(self.learning_rate))(concatenated)        
         # Create the model
         model = Model(inputs=input_layer, outputs=output)        
         # Compile the model
@@ -124,7 +124,7 @@ class ModelClass:
         model.compile(optimizer=custom_optimizer, loss='mean_squared_error', metrics=['mape', 'mae', 'mse'])
         # Print the model summary to check the shapes
         # model.summary()
-        model.build((None, self.timesteps, self.feature_size))  # Here, you specify the input shape
+        # model.build((None, self.timesteps, self.feature_size))  # Here, you specify the input shape
         # utils.plot_model(model, to_file="data/models/parallel_cnn_lstm.pdf", show_shapes=True)
         return model
         
