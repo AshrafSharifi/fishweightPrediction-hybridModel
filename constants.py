@@ -3,6 +3,8 @@ import pandas as pd
 
 
 class constants:
+    # Maximum ingestion rate : 1hour : 60 min
+    delta_t :int = 1
     
     # Maximum ingestion rate
     I_max: float = 1.831  # kJ (g fish m d)^-1

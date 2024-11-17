@@ -9,8 +9,8 @@ class rainbow_trout_model:
     def __init__(self):
         self.constants_obj = constants()
     
-    def Dynamic_individual_weight(self,A,C,Epsilon):
-        return ((A-C)/Epsilon)
+    def Dynamic_individual_weight(self,A,C,Epsilon,delta_t):
+        return (((A-C)/Epsilon)*delta_t)
     # Equation(4) : calculates the energy available for growth after accounting for energy losses
     def Energy_Acquisition(self,w,Tw):
         I = self.Energy_Intake_BasedOn_Temperature_and_Weight(w, Tw)
@@ -36,8 +36,8 @@ class rainbow_trout_model:
     def Energy_Intake_BasedOn_Temperature_and_Weight(self, wm, Tw):
         I_ration = self.Input_ration(wm,Tw)
         I_opt = self.Optimal_Ingestion_Rate(wm, Tw)
-        if I_ration == None:
-            return I_opt
+        # if I_ration == None:
+        #     return I_opt
         Energy_ration = self.Energy_Intake_From_Feed(I_ration)
         
         if Tw < self.constants_obj.T_lf:
@@ -80,7 +80,7 @@ class rainbow_trout_model:
                     closest_temp = min(df.columns[3:], key=lambda x: abs(float(x) - temperature))
                     return df.at[i, closest_temp]
             return None  # If no match found
-        df_feedingTable = pd.read_csv('data/Preore_Dataset/FeedingTable.csv')
+        df_feedingTable = pd.read_csv('data/Preore_Dataset/Final_feeding_table.csv')
         value = get_value(df_feedingTable, w, T)
         return value
         
