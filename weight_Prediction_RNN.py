@@ -20,12 +20,13 @@ from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import mean_squared_error, mean_absolute_error, mean_absolute_percentage_error
 from sklearn.model_selection import KFold
 import shap
+from io import BytesIO
 
 @dataclass
 class Args:
     # "LSTM" "LSTM_CNN" "CNN_LSTM" "Parrarel_CNN_LSTM" "Random_Forest"
     # 3_LSTM_CNN_WithoutTransform_WithTime_(2024-11-06_11_14_40)
-    prediction_Method:str ="LSTM" 
+    prediction_Method:str ="Random_Forest" 
     
     if prediction_Method!="Random_Forest":
         verbos= 0
@@ -93,7 +94,7 @@ def log_metrics(writer, history):
         
 def prepare_data(args, data):
     # Drop unwanted columns
-    # data = data.drop(data.columns[data.columns.str.contains('EXIT')], axis=1)
+    data = data.drop(data.columns[data.columns.str.contains('EXIT')], axis=1)
     data['Entrance_timestamp'] = pd.to_datetime(data['Entrance_timestamp'])
     data = data.drop(["PREORE_VAKI-Length [mm]", "PREORE_VAKI-CF"], axis=1)
     
@@ -114,6 +115,7 @@ def prepare_data(args, data):
     # Separate target and feature columns
     y = data["PREORE_VAKI-Weight [g]"].values
     x = data.drop(["PREORE_VAKI-Weight [g]", "Fish_Weight"], axis=1)
+    args.feature_names = x.columns
 
     # Apply transformation to target if flag is set
     if args.transformFlag:
@@ -210,11 +212,24 @@ def corr_matrix(data, writer):
     # Log the combined figure to TensorBoard
     writer.add_figure("Combined Correlation Plots", fig)
     
-def shap_feature_selection(args,best_rf,x_train):
+def shap_feature_selection(args, best_rf, x_train, writer):
+    # Initialize SHAP TreeExplainer
     shap_explainer = shap.TreeExplainer(best_rf)
     shap_importance_train = shap_explainer.shap_values(x_train)
-    shap.summary_plot(shap_importance_train,x_train,feature_names= x_train.columns)
-    shap.summary_plot(shap_importance_train,x_train,feature_names=x_train.columns,plot_type="bar")
+
+    # Save the summary plot (beeswarm) as an image and add it to TensorBoard
+    fig = plt.figure()
+    shap.summary_plot(shap_importance_train, x_train, feature_names=args.feature_names, show=False)
+    writer.add_figure("SHAP Summary Plot (Beeswarm)", fig)
+    
+
+    # Save the bar plot summary as an image and add it to TensorBoard
+    fig = plt.figure()
+    shap.summary_plot(shap_importance_train, x_train, feature_names=args.feature_names, plot_type="bar", show=False)
+    writer.add_figure("SHAP Summary Plot (Bar)", fig)
+
+
+
 
 def train_random_forest(args, data):
     # Initialize writer and log hyperparameters
@@ -224,17 +239,19 @@ def train_random_forest(args, data):
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()]))
     )
 
-    # Log feature names
-    feature_table = "|Features|\n|-|\n" + "\n".join([f"|{name}|" for name in data.columns])
-    writer.add_text("4: Feature Names", feature_table)
-    
-    
         
     # Data preparation and split
     x, y, data_contained_fishWeight = prepare_data(args, data)
     x_train, x_test, y_train, y_test, data, Fish_Weight_Predictedby_Math_model, original_x_test, original_y_test = split_data(x, y, data_contained_fishWeight)
     
     data = data_contained_fishWeight.drop(columns=["Fish_Weight"])
+    
+    # Log feature names
+    feature_table = "|Features|\n|-|\n"
+    feature_table += "\n".join([f"|{name}|" for name in args.feature_names])
+    writer.add_text("3: Feature Names", feature_table)
+
+
     if args.displayCorrMatrix:
         corr_matrix(data,writer)
     # Model training
@@ -275,7 +292,7 @@ def train_random_forest(args, data):
     plots = Custom_plots(Fish_Weight_Predictedby_Math_model, actual_value, writer)
     plots.plot_all()
     writer.close()
-    shap_feature_selection(args,best_rf,x_train)
+    shap_feature_selection(args,best_rf,x_train,writer)
 
 
 def train(args, data):
@@ -284,13 +301,17 @@ def train(args, data):
         "2: Hyperparameters",
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
-    feature_table = "|Features|\n|-|\n"
-    feature_table += "\n".join([f"|{name}|" for name in data.columns])
-    writer.add_text("3: Feature Names", feature_table)
+
 
     x, y, data_contained_fishWeight = prepare_data(args, data)
     # x_train, x_test, y_train, y_test,data,Fish_Weight_Predictedby_Math_model, original_x_test, original_y_test= split_data( x, y, data_contained_fishWeight)
     data = data_contained_fishWeight.drop(columns=["Fish_Weight"])
+    
+    feature_table = "|Features|\n|-|\n"
+    feature_table += "\n".join([f"|{name}|" for name in args.feature_names])
+    writer.add_text("3: Feature Names", feature_table)
+
+    
     if args.displayCorrMatrix:
         corr_matrix(data,writer)
     
@@ -432,11 +453,11 @@ if __name__ == "__main__":
 
         if args.prediction_Method=="Random_Forest":
             run_name = "RF_" + run_name
-            args.path = f"data/Runs/{run_name}"
+            args.path = f"data/Runs_MethodsComparison/{run_name}"
             train_random_forest(args, data_all)
         else:
             run_name = str(args.timesteps)+"_"+args.prediction_Method + "_" + run_name
-            args.path = f"data/Runs/{run_name}"
+            args.path = f"data/Runs_MethodsComparison/{run_name}"
             args.model_file = args.path + '/fish_weight_prediction_model.hdf5'
             train(args,data_all)
 

@@ -38,18 +38,22 @@ class Custom_plots:
         ax.set_title("Residuals Plot")
 
     def plot_predictions_with_hist(self, ax):
-        sns.histplot(self.actual_values, label="Actual Values", color="blue", kde=True, alpha=0.6, ax=ax)
-        sns.histplot(self.predicted_values, label="Predicted Values", color="orange", kde=True, alpha=0.6, ax=ax)
-        ax.set_title("Distribution of Predicted vs Actual Values")
-        ax.set_xlabel("Value")
-        ax.set_ylabel("Count")
-        ax.legend()
+        sns.reset_defaults()
+        # Plot histograms
+        ax.hist(self.actual_values, bins=30, label="Actual Values", alpha=0.6, color="blue", edgecolor="black")
+        ax.hist(self.predicted_values, bins=30, label="Predicted Values", alpha=0.6, color="orange", edgecolor="black")
+        # sns.kdeplot(self.actual_values, color="blue", linewidth=2, ax=ax)
+        # sns.kdeplot(self.predicted_values, color="orange", linewidth=2, ax=ax)
+        ax.set_title("Distribution of Predicted vs Actual Values", fontsize=14, fontweight="bold")
+        ax.set_xlabel("Value", fontsize=12)
+        ax.set_ylabel("Count/Density", fontsize=12)
+        ax.legend(loc="best", fontsize=10)  # Ensure the legend is placed appropriately
+        ax.grid(alpha=0.3)  # Add a light grid for better readability
 
     def plot_all(self):
         # Create a 2x2 grid of subplots
         fig, axs = plt.subplots(2, 2, figsize=(15, 12))
         plt.tight_layout(pad=5.0)
-
         # Generate each plot on the respective subplot
         self.plot_predictions(axs[0, 0])
         self.plot_actual_vs_predicted_scatter(axs[0, 1])

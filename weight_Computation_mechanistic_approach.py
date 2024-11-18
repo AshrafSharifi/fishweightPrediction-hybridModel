@@ -62,35 +62,22 @@ for _,time_row in df_timeWindow.iterrows():
     num_samples = 1  # Specify the number of initial weights you want to generate
     initial_weights = np.random.normal(loc=mean_weight, scale=std_dev_weight, size=num_samples)
     mean_random_weights = math.ceil(sum(initial_weights)/num_samples)
-    # =======================================================    
-    
-    initial_weight_data = VAKI_Size_Weigth.loc[0]
-    
+    # =======================================================        
+    initial_weight_data = VAKI_Size_Weigth.loc[0]   
     df_temperature_data = df_temperature_data[df_temperature_data['Entrance_timestamp'] >= initial_weight_data['observed_timestamp']].reset_index(drop=True)
     df_temperature_data['Fish_Weight']=None
-    df_temperature_data['Energy_Acquisition(A)']=None
-    df_temperature_data['Catabolic_component(C)']=None
-    df_temperature_data['Somatic_tissue_energy_content(Epsilon)']=None
-    df_temperature_data['Dynamic_individual_weight']=None
-    
-    
-    fish_weight = mean_random_weights
-    
+         
+    fish_weight = mean_random_weights   
     for index,row in df_temperature_data.iterrows():
         df_temperature_data.at[index, 'Fish_Weight'] = fish_weight  
         water_temperature = row['PREORE_FEM_ENTRANCE-Temp [Â°C]'] 
-        df_temperature_data.at[index,'Energy_Acquisition(A)'] = rainbow_trout_model.Energy_Acquisition(fish_weight,water_temperature)   
-        df_temperature_data.at[index,'Catabolic_component(C)'] = rainbow_trout_model.Catabolic_component(fish_weight,water_temperature)
-        df_temperature_data.at[index,'Somatic_tissue_energy_content(Epsilon)'] = rainbow_trout_model.Total_energy_input(fish_weight)
-        df_temperature_data.at[index,'Feeding_Amount'] = rainbow_trout_model.Input_ration(fish_weight,water_temperature)
-        row = df_temperature_data.iloc[index]
+        Energy_Acquisition_A = rainbow_trout_model.Energy_Acquisition(fish_weight,water_temperature)   
+        Catabolic_component_C = rainbow_trout_model.Catabolic_component(fish_weight,water_temperature)
+        Somatic_tissue_energy_content_Epsilon = rainbow_trout_model.Total_energy_input(fish_weight)
         delta_t = 24/(rainbow_trout_model.constants_obj.delta_t*time_row.sampling_rate_per_day)
-            
+        Dynamic_individual_weight = rainbow_trout_model.Dynamic_individual_weight(Energy_Acquisition_A,Catabolic_component_C,Somatic_tissue_energy_content_Epsilon,delta_t)
+        fish_weight += Dynamic_individual_weight
         
-        df_temperature_data.at[index,'Dynamic_individual_weight'] = rainbow_trout_model.Dynamic_individual_weight(row['Energy_Acquisition(A)'],row['Catabolic_component(C)'],row['Somatic_tissue_energy_content(Epsilon)'],delta_t)
-        fish_weight += df_temperature_data.iloc[index]['Dynamic_individual_weight']
-        
-
     print("================================================================")
     print("Time Window: " + str(time_row_index))
     print("Initial weight: "+ str(mean_random_weights))
@@ -104,8 +91,7 @@ for _,time_row in df_timeWindow.iterrows():
                }
     dynamic_weight[time_row_index] = my_dict
     time_row_index += 1
-    
-    
+
     # comparison
     
     # Observed and predicted weights (example data)
@@ -121,10 +107,7 @@ for _,time_row in df_timeWindow.iterrows():
     
     # RMSE for the mean weights
     rmse_mean = np.sqrt(mean_squared_error([observed_mean], [predicted_mean]))
-    
 
-    
-    
     # RMSE for the standard deviation
     rmse_std = np.sqrt(mean_squared_error([observed_std], [predicted_std]))
     
@@ -134,7 +117,7 @@ for _,time_row in df_timeWindow.iterrows():
     print(f"RMSE (Standard Deviation): {rmse_std}")
 
 print('done')
-with open(root + 'results/dynamic_individual_weight.pkl', 'wb') as file:
+with open(root + 'results/mechanistic_dynamic_individual_weight.pkl', 'wb') as file:
     pickle.dump(dynamic_weight, file)
     
     
