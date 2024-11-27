@@ -26,7 +26,7 @@ from io import BytesIO
 class Args:
     # "LSTM" "LSTM_CNN" "CNN_LSTM" "Parrarel_CNN_LSTM" "Random_Forest"
     # 3_LSTM_CNN_WithoutTransform_WithTime_(2024-11-06_11_14_40)
-    prediction_Method:str ="Random_Forest" 
+    prediction_Method:str ="LSTM" 
     
     if prediction_Method!="Random_Forest":
         verbos= 0
@@ -51,6 +51,7 @@ class Args:
         transformFlag: bool() = False 
     
     
+
     withTime: bool() = True
     reducedFeature: bool() = False    
     root = 'data/Preore_Dataset/'
@@ -60,6 +61,10 @@ class Args:
     feature_names = []
     # Scalers
     scaler_x = MinMaxScaler()
+    time_windows_size = []
+    time_windows = []
+    run_name=""
+
 
 def find_best_RF_parameters(x_train,y_train):
     #Define parameter grid for GridSearch
@@ -92,6 +97,7 @@ def log_metrics(writer, history):
         writer.add_scalar("MAPE/Train", history.history['mape'][epoch], epoch)
         writer.add_scalar("MAPE/Val", history.history['val_mape'][epoch], epoch)
         
+
 def prepare_data(args, data):
     # Drop unwanted columns
     data = data.drop(data.columns[data.columns.str.contains('EXIT')], axis=1)
@@ -110,7 +116,7 @@ def prepare_data(args, data):
 
     # Drop additional columns based on reduced feature flag
     if args.reducedFeature:
-        data = data.drop(["Energy_Acquisition(A)", "Catabolic_component(C)", "Somatic_tissue_energy_content(Epsilon)"], axis=1)
+        data = data.drop(["Energy_Acquisition(A)", "Catabolic_component(C)", "Somatic_tissue_energy_content(Epsilon)","Dynamic_individual_weight"], axis=1)
     
     # Separate target and feature columns
     y = data["PREORE_VAKI-Weight [g]"].values
@@ -294,6 +300,11 @@ def train_random_forest(args, data):
     writer.close()
     shap_feature_selection(args,best_rf,x_train,writer)
 
+def assign_labels(val_index, boundaries):
+    labels = np.zeros_like(val_index, dtype=int)
+    for i, (start, end) in enumerate(boundaries):
+        labels[(val_index >= start) & (val_index <= end)] = i + 1
+    return labels
 
 def train(args, data):
     writer = SummaryWriter(args.path)
@@ -302,6 +313,10 @@ def train(args, data):
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
 
+    # Convert time window sizes into ranges
+    ranges = [0] + args.time_windows_size  # Add a starting point at 0
+    ranges = np.cumsum(ranges)
+    boundaries = [(ranges[i], ranges[i+1]-1) for i in range(len(args.time_windows_size))]
 
     x, y, data_contained_fishWeight = prepare_data(args, data)
     # x_train, x_test, y_train, y_test,data,Fish_Weight_Predictedby_Math_model, original_x_test, original_y_test= split_data( x, y, data_contained_fishWeight)
@@ -322,6 +337,8 @@ def train(args, data):
         print(f"Training fold {fold + 1}/{args.n_splits}")                                                                
         x_train, x_val = x[train_index], x[val_index]
         y_train, y_val = y[train_index], y[val_index]
+        labels = assign_labels(val_index, boundaries)
+        train_labels = assign_labels(train_index, boundaries)
         
         Fish_Weight_Predictedby_Math_model = np.array(data_contained_fishWeight.iloc[val_index]["Fish_Weight"]).reshape(-1,1)
         
@@ -364,7 +381,7 @@ def train(args, data):
                 validation_split=args.validation_split, callbacks=[checkpointer, early_stopping], verbose=args.verbos)
         
             log_metrics(writer, history)
-            for metric in ['loss', 'mse', 'mae', 'mape']:
+            for metric in ['mse', 'mae', 'mape']:
                 fig, ax = plt.subplots()
                 ax.plot(history.history[metric], label=f'Training {metric.upper()}')
                 ax.plot(history.history[f'val_{metric}'], label=f'Validation {metric.upper()}')
@@ -376,22 +393,45 @@ def train(args, data):
     
 
         test_results = model.evaluate(x_val, y_val, verbose=args.verbos)
-        predicted_values = []
-        actual_values = []
-        for j in range(len(original_y_test)):
-            sample_reshaped = np.tile(original_x_test[j], (1, args.timesteps, 1))
-            y_pred = model.predict(sample_reshaped)
-            if args.transformFlag:
-                y_pred = np.expm1(y_pred)[0][0]
-                actual_value = np.expm1([[original_y_test[j]]])[0][0]
-            else:
-                y_pred = y_pred[0][0]
-                actual_value = original_y_test[j]
+        
+        # Ensure inputs are 3D by adding a dimension if necessary
+
+        if original_x_test.ndim == 2:
+            reshaped_inputs = np.tile(original_x_test[:, np.newaxis, :], (1, args.timesteps, 1))
+        else:  # Already 3D
+            reshaped_inputs = np.tile(original_x_test, (1, args.timesteps, 1))
+        
+        # Batch prediction
+        y_preds = model.predict(reshaped_inputs, batch_size=32)  # Adjust batch_size for your hardware
+        
+        # Post-process predictions and actual values
+        if args.transformFlag:
+            predicted_values = np.expm1(y_preds[:, 0])  # Transform predicted values
+            actual_values = np.expm1(original_y_test)  # Transform ground truth
+        else:
+            predicted_values = y_preds[:, 0]  # Directly take predictions
+            actual_values = original_y_test  # Directly use ground truth
+        
+        # Reshape to required dimensions
+        predicted_values = predicted_values.reshape(-1, 1)
+        actual_values = actual_values.reshape(-1, 1)
+        
+        # predicted_values = []
+        # actual_values = []
+        # for j in range(len(original_y_test)):
+        #     sample_reshaped = np.tile(original_x_test[j], (1, args.timesteps, 1))
+        #     y_pred = model.predict(sample_reshaped)
+        #     if args.transformFlag:
+        #         y_pred = np.expm1(y_pred)[0][0]
+        #         actual_value = np.expm1([[original_y_test[j]]])[0][0]
+        #     else:
+        #         y_pred = y_pred[0][0]
+        #         actual_value = original_y_test[j]
             
-            predicted_values.append(y_pred)
-            actual_values.append(actual_value)
-        actual_values = np.array(actual_values).reshape(-1,1)
-        predicted_values = np.array(predicted_values).reshape(-1,1)
+        #     predicted_values.append(y_pred)
+        #     actual_values.append(actual_value)
+        # actual_values = np.array(actual_values).reshape(-1,1)
+        # predicted_values = np.array(predicted_values).reshape(-1,1)
         mse1,mae1,mape1= compute_metrics(predicted_values, actual_values)
         fold_metrics["mse"].append(mse1)
         fold_metrics["mae"].append(mae1)
@@ -401,12 +441,13 @@ def train(args, data):
             mse1= np.mean(fold_metrics["mse"])
             mae1= np.mean(fold_metrics["mae"])
             mape1= np.mean(fold_metrics["mape"])
-            plots = Custom_plots(predicted_values, actual_values,writer)
-            plots.plot_all()
-            plt.close(fig)
+            for p in np.unique(labels):
+                title = "Time window: " +str(p)+ args.time_windows[p-1] + "  (Train size: "+str(len(train_labels[train_labels==p]))+")"
+                plots = Custom_plots(predicted_values[labels==p],actual_values[labels==p],writer=writer,title=title,summarytitle=args.run_name+"(TimeWindow: "+str(p)+")")
+                plots.plot_all()
+                plt.close(fig)
             print("*****************************************************************************************")  
-           
-            
+
             mse2,mae2,mape2= compute_metrics(Fish_Weight_Predictedby_Math_model, actual_values)
             table_header = f"| Metric | {args.prediction_Method} | Method based on mathematical model |\n|-|-|-|"
             table_rows = f"| MSE   | {mse1:.4f} | {mse2:.4f} |\n"
@@ -414,15 +455,27 @@ def train(args, data):
             table_rows += f"| MAPE  | {mape1:.4f} | {mape2:.4f} |"
             table = f"{table_header}\n{table_rows}"
             writer.add_text("1: Metrics Comparison", table)
-            plots = Custom_plots(Fish_Weight_Predictedby_Math_model, actual_values,writer,"Method based on mathematical model_")
-            plots.plot_all()
-            plt.close(fig)
+            
+            for p in np.unique(labels):
+                title = "Method based on mathematical model\nTime window: " +str(p)+ args.time_windows[p-1]
+                plots = Custom_plots(Fish_Weight_Predictedby_Math_model[labels==p],actual_values[labels==p],writer=writer, title=title, summarytitle="Method based on mathematical model(TimeWindow: "+str(p)+")")
+                plots.plot_all()
+                plt.close(fig)
+            # plots = Custom_plots(Fish_Weight_Predictedby_Math_model, actual_values,writer,"Method based on mathematical model_")
+            # plots.plot_all()
+            # plt.close(fig)
             writer.close()
-           
+ 
+
+            
+
 if __name__ == "__main__":
     args = tyro.cli(Args)
     with open(args.root + 'results/dynamic_individual_weight.pkl', 'rb') as file:
         data = pickle.load(file)
+    for i in range(len(data)-1):
+        args.time_windows_size.append(len(data[i]['data_contextual_weight']))
+        args.time_windows.append(" (From: "+ str(data[i]['start_date'])+ " - To: "+ str(data[i]['end_date']) + ")\n Sample per day: "+str(data[i]["sampling_rate_per_day"]))
     data_all = data['data_contextual_weight']
     data_all = data_all.drop(["index","Unnamed: 0","Exit_timestamp","observed_timestamp"],axis=1)
         
@@ -452,12 +505,12 @@ if __name__ == "__main__":
         run_name += f"({formatted_datetime})"
 
         if args.prediction_Method=="Random_Forest":
-            run_name = "RF_" + run_name
-            args.path = f"data/Runs_MethodsComparison/{run_name}"
+            args.run_name = "RF_" + run_name
+            args.path = f"data/Runs/{args.run_name}"
             train_random_forest(args, data_all)
         else:
-            run_name = str(args.timesteps)+"_"+args.prediction_Method + "_" + run_name
-            args.path = f"data/Runs_MethodsComparison/{run_name}"
+            args.run_name = str(args.timesteps)+"_"+args.prediction_Method + "_" + run_name
+            args.path = f"data/Runs/{args.run_name}"
             args.model_file = args.path + '/fish_weight_prediction_model.hdf5'
             train(args,data_all)
 
