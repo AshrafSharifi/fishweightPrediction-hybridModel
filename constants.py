@@ -3,7 +3,7 @@ import pandas as pd
 
 
 class constants:
-    # Maximum ingestion rate : 1hour : 60 min
+ 
     delta_t :int = 1
     
     # Maximum ingestion rate
