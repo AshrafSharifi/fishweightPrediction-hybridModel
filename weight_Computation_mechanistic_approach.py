@@ -1,10 +1,9 @@
 import pandas as pd
 import numpy as np
-from rainbow_trout_model import *
-import json
 import pickle
-from sklearn.metrics import mean_squared_error, r2_score
-import matplotlib.pyplot as plt
+from sklearn.metrics import mean_squared_error
+from rainbow_trout_model import *
+import math
 
 
 root = 'data/Preore_Dataset/'
@@ -15,7 +14,7 @@ VAKI_Size_Weigth_unique = VAKI_Size_Weigth_initial['observed_timestamp'].str[:10
 
 # FISH_WEIGHT_unive = pd.read_csv(root+'UNIVE_MOD1.FISH_WEIGHT.unive_trout.3__56.csv')
 # FISH_WEIGHT_unive_date_unique = FISH_WEIGHT_unive['observed_timestamp'].str[:10].unique()
-rainbow_trout_model = rainbow_trout_model()
+# rainbow_trout_model = rainbow_trout_model()
 
 dynamic_weight = dict()
 time_row_index = 0
@@ -23,7 +22,8 @@ time_row_index = 0
 df_timeWindow.at[1, 'start_date'] = '2019-11-15'
 
 # We use Vaki weights
-for _,time_row in df_timeWindow.iterrows():   
+for _,time_row in df_timeWindow.iterrows(): 
+    rainbow_trout = rainbow_trout_model(time_row.sampling_rate_per_day)
     df_data['Entrance_timestamp'] = pd.to_datetime(df_data['Entrance_timestamp'])
     VAKI_Size_Weigth_initial['observed_timestamp'] = pd.to_datetime(VAKI_Size_Weigth_initial['observed_timestamp'])
     
@@ -67,15 +67,16 @@ for _,time_row in df_timeWindow.iterrows():
     df_temperature_data = df_temperature_data[df_temperature_data['Entrance_timestamp'] >= initial_weight_data['observed_timestamp']].reset_index(drop=True)
     df_temperature_data['Fish_Weight']=None
          
-    fish_weight = mean_random_weights   
+    # fish_weight = mean_random_weights 
+    fish_weight = initial_weight_data['PREORE_VAKI-Weight [g]']
     for index,row in df_temperature_data.iterrows():
         df_temperature_data.at[index, 'Fish_Weight'] = fish_weight  
         water_temperature = row['PREORE_FEM_ENTRANCE-Temp [Â°C]'] 
-        Energy_Acquisition_A = rainbow_trout_model.Energy_Acquisition(fish_weight,water_temperature)   
-        Catabolic_component_C = rainbow_trout_model.Catabolic_component(fish_weight,water_temperature)
-        Somatic_tissue_energy_content_Epsilon = rainbow_trout_model.Total_energy_input(fish_weight)
-        delta_t = 24/(rainbow_trout_model.constants_obj.delta_t*time_row.sampling_rate_per_day)
-        Dynamic_individual_weight = rainbow_trout_model.Dynamic_individual_weight(Energy_Acquisition_A,Catabolic_component_C,Somatic_tissue_energy_content_Epsilon,delta_t)
+        Energy_Acquisition_A = rainbow_trout.Energy_Acquisition(fish_weight,water_temperature)   
+        Catabolic_component_C = rainbow_trout.Catabolic_component(fish_weight,water_temperature)
+        Somatic_tissue_energy_content_Epsilon = rainbow_trout.Total_energy_input(fish_weight)
+        delta_t = 24/(rainbow_trout.constants_obj.delta_t*time_row.sampling_rate_per_day)
+        Dynamic_individual_weight = rainbow_trout.Dynamic_individual_weight(Energy_Acquisition_A,Catabolic_component_C,Somatic_tissue_energy_content_Epsilon,delta_t)
         fish_weight += Dynamic_individual_weight
         
     print("================================================================")
