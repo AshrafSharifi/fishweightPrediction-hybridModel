@@ -8,10 +8,10 @@ class constants:
         self.sampling_per_day = sampling_per_day
         
         # Maximum ingestion rate
-        self.I_max = 76.29  # J (g fish m h)^-1
+        self.I_max = 1831/sampling_per_day  #76.29  # J (g fish m h)^-1
         
         # Fasting catabolism at 0°C
-        self.k_0 = 	0.0000354  # g O2 (g fish n h)^-1
+        self.k_0 = 0.00085/sampling_per_day #0.0000354  g O2 (g fish n h)^-1
  
     delta_t :int = 1
     

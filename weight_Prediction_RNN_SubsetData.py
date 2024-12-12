@@ -118,14 +118,13 @@ def prepare_data(args, data):
     reduced_columns_to_remove = []
     if args.reducedFeature:
         reduced_columns_to_remove = [
-            "Energy_Acquisition(A)", "Catabolic_component(C)", 
-            "Somatic_tissue_energy_content(Epsilon)", 'Dynamic_individual_weight'
+            "Energy_Acquisition(A)", "Catabolic_component(C)", "Somatic_tissue_energy_content(Epsilon)","I_Ration_Per_SamplingFrequency","Feed_ration"
         ]
         
 
     # Prepare target (y) and features (x)
     y = data["PREORE_VAKI-Weight [g]"].values
-    x = data.drop(["PREORE_VAKI-Weight [g]", "Fish_Weight"], axis=1)
+    x = data.drop(["PREORE_VAKI-Weight [g]", "mathematical_computed_weight"], axis=1)
 
     # Create reduced feature dataset
     reduced_x = x.drop(columns=reduced_columns_to_remove, errors='ignore')
@@ -251,7 +250,7 @@ def train(args,original_data):
        
         data = data_all.drop(["index","Unnamed: 0","Exit_timestamp","observed_timestamp"],axis=1)
         x, reduced_x, y, data_contained_fishWeight = prepare_data(args, data)
-        data = data_contained_fishWeight.drop(columns=["Fish_Weight"])
+        data = data_contained_fishWeight.drop(columns=["mathematical_computed_weight"])
         kfold = KFold(n_splits=args.n_splits, shuffle=True, random_state=23)
         fold_metrics = {"mse": [],"mae": [],"mape": []}
         
@@ -386,7 +385,7 @@ def train(args,original_data):
                     plots = Custom_plots(predicted_values[labels==p],actual_values[labels==p],writer=writer,title=title,summarytitle=args.run_name+"(TimeWindow: "+str(p)+")")
                     plots.plot_all()
                     plt.close(fig)
-                total_metrics[str(subset)+str(args.reducedFeature)] = {"subset": subset, "mse": mse1, "mae": mae1, "mape": mape1}
+                total_metrics[str(subset)+str(args.reducedFeature)] = {"reducedFeature": args.reducedFeature,"subset": subset, "mse": mse1, "mae": mae1, "mape": mape1}
         
         if args.save_test_set:
             with open('data/testset.pkl', 'wb') as file:
@@ -399,7 +398,7 @@ def train(args,original_data):
     # Build the table dynamically
     for _, metrics in total_metrics.items():
         subset =  metrics["subset"]
-        table_header += f" {args.prediction_Method}_Training with {subset}% data_ReducedFeatures:{str(args.reducedFeature)} |"
+        table_header += f" {args.prediction_Method}_Training with {subset}% data_ReducedFeatures:{str(metrics['reducedFeature'])} |"
         # Add the metrics to their respective rows
         table_rows["MSE"] += f" {metrics['mse']:.4f} |"
         table_rows["MAE"] += f" {metrics['mae']:.4f} |"
@@ -452,7 +451,7 @@ def remove_last_records(args,data, timestamp_field='Entrance_timestamp'):
     
     modified_windows = []
     for i in range(len(data)-1):
-        window = data[i]['data_contextual_weight']
+        window = data[i]['df']
         window = window.sort_values(by=timestamp_field)
         modified_windows.append(window.iloc[:-to_remove_per_window[i]])
     
@@ -484,7 +483,7 @@ def remove_random_records(args, data, timestamp_field='Entrance_timestamp'):
     start_idx = 0  # to keep track of the starting index for each window
     
     for i in range(len(data)-1):
-        window = data[i]['data_contextual_weight']
+        window = data[i]['df']
         
         # Randomly sample and remove rows from the window
         window_size = len(window)
@@ -511,7 +510,7 @@ if __name__ == "__main__":
     with open(args.root + 'results/dynamic_individual_weight.pkl', 'rb') as file:
         data = pickle.load(file)
     for i in range(len(data)-1):
-        args.time_windows_size.append(len(data[i]['data_contextual_weight']))
+        args.time_windows_size.append(len(data[i]['df']))
         args.time_windows.append(" (From: "+ str(data[i]['start_date'])+ " - To: "+ str(data[i]['end_date']) + ")\n Sample per day: "+str(data[i]["sampling_rate_per_day"]))
     
    
