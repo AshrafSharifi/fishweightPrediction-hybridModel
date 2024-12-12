@@ -317,7 +317,7 @@ def incremental_train(args, data):
     writer.add_text("1: Metrics Comparison", table)
     
         # Save the table as text (or log it to a writer, etc.)
-    writer.add_text(f"Metrics for Increamental Learning", table)
+    writer.add_text("Metrics for Increamental Learning", table)
 
     writer.close()
 

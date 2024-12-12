@@ -43,7 +43,7 @@ class Args:
     
     using_saved_test_set = True   
     save_test_set = False
-    
+    futer_subset_size = 20
     subset_size: float = 100
     withTime: bool() = True
     reducedFeature: bool() = False    
@@ -143,11 +143,26 @@ def split_data(data, subset, boundaries, timestamp_field=None):
         keep_indices = indices[:split_point]
         remove_indices = indices[split_point:]
         
+        futer_subset_size = args.futer_subset_size / 100
+        if subset !=  100:
+            # keep futer_subset_size% of data for validation
+            split_point = int(len(remove_indices) * futer_subset_size)
+            remove_indices = remove_indices[:split_point]
+        else:
+            all_indices = np.arange(start, end)
+            # Calculate the number of indices to select (20%)
+            num_to_select = int(len(all_indices) * futer_subset_size)
+            # Randomly select indices
+            remove_indices = np.random.choice(all_indices, size=num_to_select, replace=False)
+            
+        
         train_indices.extend(keep_indices)
         test_indices.extend(remove_indices)
     
     return train_indices, test_indices
-  
+
+
+
 
 def train(args,original_data):
     writer = SummaryWriter(args.path)
@@ -163,12 +178,13 @@ def train(args,original_data):
     feature_table = "|Features|\n|-|\n"
     feature_table += "\n".join([f"|{name}|" for name in args.feature_names])
     writer.add_text("3: Feature Names", feature_table)
+    data_all = original_data.copy()
+    x, _, y, data_contained_fishWeight = prepare_data(args, data_all)
     
-    for i, subset in enumerate([90 , 80, 70,60,50]):
+    for i, subset in enumerate([40,60,80,100]):
         args.subset_size = subset
 
-        data_all = original_data.copy()
-        x, _, y, data_contained_fishWeight = prepare_data(args, data_all)
+       
 
         fold_metrics = {"mse": [],"mae": [],"mape": []}
 
