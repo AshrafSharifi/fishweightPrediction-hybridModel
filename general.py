@@ -6,7 +6,7 @@ import seaborn as sns
 
 class general:
     
-    def interpolate_outliers(weights, label):
+    def interpolate_outliers(weights, label,show_plot = False):
         # Detect outliers using the IQR method
         q1 = np.percentile(weights, 25)
         q3 = np.percentile(weights, 75)
@@ -34,23 +34,24 @@ class general:
                     # Find the next valid (positive) value to use
                     next_positive = next((v for v in weights_interpolated[i:] if v > 0), 1e-6)  # Use a small positive value if no valid value is found
                     weights_interpolated[i] = next_positive
-    
-        # Plot
-        plt.figure(figsize=(10, 6))
-    
-        # Original data with outliers highlighted
-        plt.plot(indices, weights, label='Original Data', marker='o')
-        plt.scatter(outlier_indices, weights[outliers], color='red', label='Outliers', zorder=5)
-    
-        # Interpolated data
-        plt.plot(indices, weights_interpolated, label='Interpolated Data', linestyle='--', marker='x')
-    
-        plt.title("Outlier Detection and Interpolation")
-        plt.xlabel("Index")
-        plt.ylabel(label)
-        plt.legend()
-        plt.grid()
-        plt.show()
+        
+        if show_plot:
+            # Plot
+            plt.figure(figsize=(10, 6))
+        
+            # Original data with outliers highlighted
+            plt.plot(indices, weights, label='Original Data', marker='o')
+            plt.scatter(outlier_indices, weights[outliers], color='red', label='Outliers', zorder=5)
+        
+            # Interpolated data
+            plt.plot(indices, weights_interpolated, label='Interpolated Data', linestyle='--', marker='x')
+        
+            plt.title("Outlier Detection and Interpolation")
+            plt.xlabel("Index")
+            plt.ylabel(label)
+            plt.legend()
+            plt.grid()
+            plt.show()
     
         return weights_interpolated
 

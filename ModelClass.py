@@ -2,6 +2,8 @@ from tensorflow.keras.models import Model, Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout,Concatenate , Bidirectional, Conv1D,Flatten , ReLU, Input, Reshape
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.regularizers import l2
+import tensorflow.keras.utils as utils
+
 
 class ModelClass:
     def __init__(self, timesteps, feature_size,dropout,learning_rate):

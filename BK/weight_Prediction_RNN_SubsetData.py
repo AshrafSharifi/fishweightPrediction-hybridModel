@@ -1,4 +1,5 @@
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import train_test_split
 from tensorflow.keras.callbacks import EarlyStopping
 import pandas as pd
 import numpy as np
@@ -15,7 +16,6 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import GridSearchCV
 from sklearn.model_selection import KFold
 import shap
-from general import general
 
 
 @dataclass
@@ -37,7 +37,14 @@ class Args:
         verbose= 0
         scale_flag: bool() = True
         transformFlag: bool() = True
-
+    else:
+        max_depth: int= 10
+        min_samples_leaf: int= 5
+        min_samples_split: int= 5
+        n_estimators: int= 1000
+        random_state: int= 23
+        scale_flag: bool() = False 
+        transformFlag: bool() = False 
     
     
     using_saved_test_set = True   
@@ -59,9 +66,37 @@ class Args:
     run_folder="Runs_SubsetData"
 
 
+def find_best_RF_parameters(x_train,y_train):
+    #Define parameter grid for GridSearch
+    param_grid = {
+        "n_estimators": [100, 500, 1000],
+        "max_depth": [5, 6, 7, 8, 9, 10],
+        "min_samples_split": [5, 10, 25, 50],
+        "min_samples_leaf": [5, 10, 25, 50]
+    }
+    # Initialize Random Forest Regressor
+    rf = RandomForestRegressor(random_state=23)
+    # Initialize Grid Search
+    grid_search = GridSearchCV(estimator=rf, param_grid=param_grid, cv=5, scoring='neg_mean_squared_error', verbose=args.verbos)
+    # Fit the model with GridSearch
+    grid_search.fit(x_train, y_train.ravel())
+    # Retrieve the best model
+    best_rf = grid_search.best_estimator_
+    print("Best Random Forest Parameters:", grid_search.best_params_)
+    return best_rf
 
-
-
+# Log the training and validation metrics to TensorBoard
+def log_metrics(writer, history):
+    for epoch in range(len(history.history['loss'])):
+        writer.add_scalar("Loss/Train", history.history['loss'][epoch], epoch)
+        writer.add_scalar("Loss/Val", history.history['val_loss'][epoch], epoch)
+        writer.add_scalar("MSE/Train", history.history['mse'][epoch], epoch)
+        writer.add_scalar("MSE/Val", history.history['val_mse'][epoch], epoch)
+        writer.add_scalar("MAE/Train", history.history['mae'][epoch], epoch)
+        writer.add_scalar("MAE/Val", history.history['val_mae'][epoch], epoch)
+        writer.add_scalar("MAPE/Train", history.history['mape'][epoch], epoch)
+        writer.add_scalar("MAPE/Val", history.history['val_mape'][epoch], epoch)
+        
 
 def prepare_data(args, data):
     # Drop unwanted columns
@@ -117,12 +152,70 @@ def prepare_data(args, data):
 
 
 
+def compute_metrics(predicted_values,actual_values):
+    # Calculate loss, MSE, MAE, and MAPE
+    mse = np.mean((predicted_values - actual_values) ** 2)
+    mae = np.mean(np.abs(predicted_values - actual_values))
+    mape = np.mean(np.abs((actual_values - predicted_values) / actual_values)) * 100
+
+    # Print the results
+    print(f"MSE: {mse}")
+    print(f"MAE: {mae}")
+    print(f"MAPE: {mape}%")
+    return mse,mae,mape
 
     
+  
+def corr_matrix(data, writer):
+    # Compute the correlation matrix
+    correMtr = data.corr()
+    mask = np.array(correMtr)
+    mask[np.tril_indices_from(mask)] = False  # the correlation matrix is symmetric
+
+    # Prepare the weight correlations for the bar chart
+    weight_corr = correMtr['PREORE_VAKI-Weight [g]'].drop('PREORE_VAKI-Weight [g]').sort_values()
+
+    # Create a figure with 2 subplots (1x2 grid)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(24, 10))
+    
+    # Plot the correlation heatmap on the first axis
+    sns.set_style("white")
+    sns.heatmap(correMtr, mask=mask, vmin=-1.0, vmax=1.0, square=True, annot=True, fmt=".2f", ax=ax1)
+    ax1.set_title('Correlation matrix of attributes')
+    
+    # Plot the vertical bar chart on the second axis
+    sns.barplot(y=weight_corr.index, x=weight_corr.values,hue=weight_corr.index, legend=False, ax=ax2)
+    ax2.set_xlabel("Correlation with PREORE_VAKI-Weight [g]")
+    ax2.set_ylabel("Features")
+    ax2.set_title("Correlation of Features with PREORE_VAKI-Weight [g]")
+    # Adjust layout and show the figure
+    plt.tight_layout()
+    plt.show()
+    # Log the combined figure to TensorBoard
+    writer.add_figure("Combined Correlation Plots", fig)
+    
+def shap_feature_selection(args, best_rf, x_train, writer):
+    # Initialize SHAP TreeExplainer
+    shap_explainer = shap.TreeExplainer(best_rf)
+    shap_importance_train = shap_explainer.shap_values(x_train)
+
+    # Save the summary plot (beeswarm) as an image and add it to TensorBoard
+    fig = plt.figure()
+    shap.summary_plot(shap_importance_train, x_train, feature_names=args.feature_names, show=False)
+    writer.add_figure("SHAP Summary Plot (Beeswarm)", fig)
+    
+
+    # Save the bar plot summary as an image and add it to TensorBoard
+    fig = plt.figure()
+    shap.summary_plot(shap_importance_train, x_train, feature_names=args.feature_names, plot_type="bar", show=False)
+    writer.add_figure("SHAP Summary Plot (Bar)", fig)
 
 
-
-
+def assign_labels(val_index, boundaries):
+    labels = np.zeros_like(val_index, dtype=int)
+    for i, (start, end) in enumerate(boundaries):
+        labels[(val_index >= start) & (val_index <= end)] = i + 1
+    return labels
 
 def train(args,original_data):
     writer = SummaryWriter(args.path)
@@ -140,13 +233,11 @@ def train(args,original_data):
     feature_table += "\n".join([f"|{name}|" for name in args.feature_names])
     writer.add_text("3: Feature Names", feature_table)
     
-    total_metrics[str(100)+str(False)] = {"reducedFeature": False,"subset": 100, "mse": 14375.2999, "mae": 76.8485, "mape": 30.3485}
-    total_metrics[str(100)+str(True)] = {"reducedFeature": True,"subset": 100, "mse": 1729.3535, "mae": 20.8545, "mape": 6.7546}
-    for i, subset in enumerate([80,60,50]):
+    for i, subset in enumerate([100, 100, 90, 80, 70, 60, 50]):
         args.subset_size = subset
         if args.subset_size==100:
             data_all = original_data['data_contextual_weight']
-            if i==-1:
+            if i==0:
                 args.reducedFeature = True
                 args.save_test_set = True
                 args.using_saved_test_set = False
@@ -211,8 +302,8 @@ def train(args,original_data):
                     testset_dict[str(fold)]=testset_dict_item
                 
 
-            labels = general.assign_labels(val_index, boundaries)
-            train_labels = general.assign_labels(train_index, boundaries)
+            labels = assign_labels(val_index, boundaries)
+            train_labels = assign_labels(train_index, boundaries)
             # Fish_Weight_Predictedby_Math_model = np.array(data_contained_fishWeight.iloc[val_index]["Fish_Weight"]).reshape(-1,1)
             if args.reducedFeature:
                 modelClass = ModelClass(args.timesteps, reduced_x_train.shape[2], args.dropout, args.learning_rate)
@@ -241,7 +332,7 @@ def train(args,original_data):
                 validation_split=args.validation_split, callbacks=[early_stopping], verbose=args.verbos)
             
             if fold + 1 == args.n_splits:
-                general.log_metrics(writer, history)
+                log_metrics(writer, history)
                 for metric in ['mse', 'mae', 'mape']:
                     fig, ax = plt.subplots()
                     ax.plot(history.history[metric], label=f'Training {metric.upper()}')
@@ -280,7 +371,7 @@ def train(args,original_data):
             actual_values = actual_values.reshape(-1, 1)
 
             
-            mse1,mae1,mape1= general.compute_metrics(predicted_values, actual_values)
+            mse1,mae1,mape1= compute_metrics(predicted_values, actual_values)
             fold_metrics["mse"].append(mse1)
             fold_metrics["mae"].append(mae1)
             fold_metrics["mape"].append(mape1)
@@ -322,7 +413,17 @@ def train(args,original_data):
     
         # Save the table as text (or log it to a writer, etc.)
     writer.add_text(f"Metrics for Subset: {subset}", table)
+    
 
+    
+    # for p in np.unique(labels):
+    #     title = "Method based on mathematical model\nTime window: " +str(p)+ args.time_windows[p-1]
+    #     plots = Custom_plots(Fish_Weight_Predictedby_Math_model[labels==p],actual_values[labels==p],writer=writer, title=title, summarytitle="Method based on mathematical model(TimeWindow: "+str(p)+")")
+    #     plots.plot_all()
+    #     plt.close(fig)
+    # plots = Custom_plots(Fish_Weight_Predictedby_Math_model, actual_values,writer,"Method based on mathematical model_")
+    # plots.plot_all()
+    # plt.close(fig)
     writer.close()
 
 

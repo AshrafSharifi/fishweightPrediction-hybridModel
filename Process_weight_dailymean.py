@@ -8,7 +8,7 @@ from general import general
 
 # Load existing data
 # root = 'data/Preore_Dataset/results/'
-RNN_data = 'data/Runs/1_LSTM_WithTransform_WithTime_WithScaling_(2024-12-09_12_20_31)/'
+RNN_data = 'data/Runs/1_LSTM_WithTransform_WithTime_WithScaling_(2024-12-09_15_21_44)/'
 
 
 with open(RNN_data + 'dynamic_individual_weight.pkl', 'rb') as file:
@@ -21,7 +21,7 @@ df_Vaki_weights_daily_mean_initial = pd.read_csv('data/Preore_Dataset/PREORE_VAK
 df_Vaki_weights_daily_mean_initial['observed_timestamp'] = pd.to_datetime(df_Vaki_weights_daily_mean_initial['observed_timestamp'])
 df_Vaki_weights_daily_mean_initial['date'] = df_Vaki_weights_daily_mean_initial['observed_timestamp'].dt.date
 
-for i in range(len(data)-1):
+for i in range(3):
     start_date = pd.to_datetime(data[i]['start_date'])
     end_date = pd.to_datetime(data[i]['end_date'])
     df_data = data[i]['df']
@@ -53,10 +53,10 @@ for i in range(len(data)-1):
     plt.figure(figsize=(12, 6))
     
     plt.plot(dates, observed_weights, label='Observed Mean Weight', marker='o')
-    plt.plot(dates, predicted_weights, label='Predicted Mean Weight', linestyle='--', marker='x', color='orange')
-    plt.plot(dates, predicted_weight_RNN, label='Feed ration', linestyle='-', marker='x', color='gray')
+    plt.plot(dates, predicted_weights, label='Predicted Mean Weight_MathematicalMethod', linestyle='--', marker='x', color='orange')
+    # plt.plot(dates, predicted_weight_RNN, label='Predicted Mean Weight_RNN', linestyle='-', marker='x', color='gray')
     
-    plt.title('Observed vs Predicted Mean Weights')
+    plt.title(f'Observed vs Predicted Mean Weights_TimeWindow: {i+1}')
     plt.xlabel('Date')
     plt.ylabel('Weight (g)')
     plt.legend()
