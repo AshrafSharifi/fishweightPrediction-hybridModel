@@ -145,7 +145,7 @@ def get_data_portion(args,x,split_indices,i,boundaries):
         
         if i!=args.num_splits-1:
             start_idx, end_idx = split_indices[tw][i+1][0], split_indices[tw][i+1][1]
-            val_indices_set = list(range(start_idx+1,end_idx+1))
+            val_indices_set = list(range(start_idx,end_idx+1))
             val_indices.extend(val_indices_set)
             tw_labels_val[tw]=val_indices_set
             # print(general.assign_labels(tw_labels_val[tw], boundaries))

@@ -26,7 +26,7 @@ class Args:
     
     if prediction_Method!="Random_Forest":
         verbos= 0
-        epochs: int= 150
+        epochs: int= 50
         batch_size: int= 32
         validation_split: float= 0.2
         timesteps: int= 1

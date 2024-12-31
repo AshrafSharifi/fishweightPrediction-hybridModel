@@ -54,7 +54,7 @@ for i in range(3):
     
     plt.plot(dates, observed_weights, label='Observed Mean Weight', marker='o')
     plt.plot(dates, predicted_weights, label='Predicted Mean Weight_MathematicalMethod', linestyle='--', marker='x', color='orange')
-    # plt.plot(dates, predicted_weight_RNN, label='Predicted Mean Weight_RNN', linestyle='-', marker='x', color='gray')
+    plt.plot(dates, predicted_weight_RNN, label='Predicted Mean Weight_RNN', linestyle='-', marker='x', color='gray')
     
     plt.title(f'Observed vs Predicted Mean Weights_TimeWindow: {i+1}')
     plt.xlabel('Date')
@@ -69,16 +69,32 @@ for i in range(3):
     # Calculate goodness-of-fit indices
     observed_mean = observed_weights.mean()
     predicted_mean = predicted_weights.mean()
+    RNN_predicted_mean = predicted_weight_RNN.mean()
+    
     
     observed_std = observed_weights.std()
     predicted_std = predicted_weights.std()
+    RNN_predicted_std = predicted_weight_RNN.std()
     
+    print("==============Bioenergetic model==============")
     # RMSE for the mean weights
     rmse_mean = np.sqrt(mean_squared_error([observed_mean], [predicted_mean]))
     
     # RMSE for the standard deviation
     rmse_std = np.sqrt(mean_squared_error([observed_std], [predicted_std]))
 
+    # Display the results
+    print("Goodness-of-Fit Indices:")
+    print(f"RMSE (Mean Weights): {rmse_mean}")
+    print(f"RMSE (Standard Deviation): {rmse_std}")
+    
+    print("==============RNN model==============")
+    # # RMSE for the mean weights
+    rmse_mean = np.sqrt(mean_squared_error([observed_mean], [RNN_predicted_mean]))
+    
+    # RMSE for the standard deviation
+    rmse_std = np.sqrt(mean_squared_error([observed_std], [RNN_predicted_std]))
+    
     # Display the results
     print("Goodness-of-Fit Indices:")
     print(f"RMSE (Mean Weights): {rmse_mean}")

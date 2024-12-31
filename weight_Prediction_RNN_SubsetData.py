@@ -142,7 +142,7 @@ def train(args,original_data):
     
     total_metrics[str(100)+str(False)] = {"reducedFeature": False,"subset": 100, "mse": 14375.2999, "mae": 76.8485, "mape": 30.3485}
     total_metrics[str(100)+str(True)] = {"reducedFeature": True,"subset": 100, "mse": 1729.3535, "mae": 20.8545, "mape": 6.7546}
-    for i, subset in enumerate([80,60,50]):
+    for i, subset in enumerate([70,60,50]):
         args.subset_size = subset
         if args.subset_size==100:
             data_all = original_data['data_contextual_weight']
@@ -155,7 +155,7 @@ def train(args,original_data):
                 args.save_test_set = False
                 args.using_saved_test_set = True
         else:
-            data_all = remove_random_records(args,original_data,'Entrance_timestamp')
+            data_all,removed_windows = remove_random_records(args,original_data,'Entrance_timestamp')
        
         data = data_all.drop(["index","Unnamed: 0","Exit_timestamp","observed_timestamp"],axis=1)
         x, reduced_x, y, data_contained_fishWeight = prepare_data(args, data)
@@ -379,13 +379,13 @@ def remove_random_records(args, data, timestamp_field='Entrance_timestamp'):
     to_remove_per_window = [int(total_to_remove * p) for p in proportions]
     
     modified_windows = []
-    start_idx = 0  # to keep track of the starting index for each window
+    removed_windows = []
+
     
     for i in range(len(data)-1):
         window = data[i]['df']
         
         # Randomly sample and remove rows from the window
-        window_size = len(window)
         num_to_remove = to_remove_per_window[i]
         
         if num_to_remove > 0:
@@ -395,10 +395,11 @@ def remove_random_records(args, data, timestamp_field='Entrance_timestamp'):
         
         # Append the modified window to the list
         modified_windows.append(window)
+        removed_windows.append(rows_to_remove)
     
     # Combine the modified windows back into a single DataFrame
     remaining_data = pd.concat(modified_windows, ignore_index=True)
-    return remaining_data
+    return remaining_data,removed_windows
 
     
 
