@@ -56,7 +56,7 @@ class ModelClass:
         # Print the model summary to check the shapes
         # model.summary()
         # model.build((None, self.timesteps, self.feature_size))  # Here, you specify the input shape
-        # utils.plot_model(model, to_file="data/models/lstm_cnn.pdf", show_shapes=True)
+        utils.plot_model(model, to_file="data/models/lstm_cnn.pdf", show_shapes=True)
         return model
     
     def create_cnn_lstm_model(self):

@@ -15,14 +15,13 @@ from ModelClass import ModelClass
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import GridSearchCV
 from sklearn.model_selection import KFold
-import shap
 from general import general
 
 @dataclass
 class Args:
     # "LSTM" "LSTM_CNN" "CNN_LSTM" "Parrarel_CNN_LSTM" "Random_Forest"
     # 3_LSTM_CNN_WithoutTransform_WithTime_(2024-11-06_11_14_40)
-    prediction_Method:str ="LSTM" 
+    prediction_Method:str ="LSTM_CNN" 
     
     if prediction_Method!="Random_Forest":
         verbos= 0
