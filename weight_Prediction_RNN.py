@@ -21,7 +21,7 @@ from general import general
 class Args:
     # "LSTM" "LSTM_CNN" "CNN_LSTM" "Parrarel_CNN_LSTM" "Random_Forest"
     # 3_LSTM_CNN_WithoutTransform_WithTime_(2024-11-06_11_14_40)
-    prediction_Method:str ="LSTM_CNN" 
+    prediction_Method:str ="LSTM" 
     
     if prediction_Method!="Random_Forest":
         verbos= 0
@@ -48,7 +48,7 @@ class Args:
     
 
     withTime: bool() = True
-    reducedFeature: bool() = False    
+    reducedFeature: bool() = True    
     root = 'data/Preore_Dataset/'
     path=""
     model_file = ""
@@ -500,7 +500,7 @@ if __name__ == "__main__":
         else:
             args.run_name = str(args.timesteps)+"_"+args.prediction_Method + "_" + run_name
             args.path = f"data/Runs_MethodsComparison/{args.run_name}"
-            args.model_file = args.path + '/fish_weight_prediction_model.hdf5'
+            args.model_file = args.path + '/fish_weight_prediction_model.keras'
             train(args,data_all)
 
     
