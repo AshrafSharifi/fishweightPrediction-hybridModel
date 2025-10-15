@@ -14,14 +14,14 @@ from Custom_plots import Custom_plots
 from ModelClass import ModelClass
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import GridSearchCV
-from sklearn.model_selection import KFold
+from sklearn.model_selection import TimeSeriesSplit
 from general import general
 
 @dataclass
 class Args:
     # "LSTM" "LSTM_CNN" "CNN_LSTM" "Parrarel_CNN_LSTM" "Random_Forest"
     # 3_LSTM_CNN_WithoutTransform_WithTime_(2024-11-06_11_14_40)
-    prediction_Method:str ="LSTM" 
+    prediction_Method:str ="LSTM_CNN" 
     
     if prediction_Method!="Random_Forest":
         verbos= 0
@@ -48,11 +48,11 @@ class Args:
     
 
     withTime: bool() = True
-    reducedFeature: bool() = True    
+    reducedFeature: bool() = False    
     root = 'data/Preore_Dataset/'
     path=""
     model_file = ""
-    displayCorrMatrix = True
+    displayCorrMatrix = False
     feature_names = []
     # Scalers
     scaler_x = MinMaxScaler()
@@ -301,9 +301,12 @@ def train(args, data):
     if args.displayCorrMatrix:
         corr_matrix(data,writer)
     
-    kfold = KFold(n_splits=args.n_splits, shuffle=True, random_state=23)
+    # kfold = KFold(n_splits=args.n_splits, shuffle=True, random_state=23)
+    kfold = TimeSeriesSplit(n_splits=args.n_splits)
     fold_metrics = {"mse": [],"mae": [],"mape": []}
-   
+    results_per_frame = {"1":{"mse": [],"mae": [],"mape": []},
+                         "2":{"mse": [],"mae": [],"mape": []},
+                         "3":{"mse": [],"mae": [],"mape": []}}
     for fold, (train_index, val_index) in enumerate(kfold.split(x)):
         print(f"Training fold {fold + 1}/{args.n_splits}")                                                                
         x_train, x_val = x[train_index], x[val_index]
@@ -393,6 +396,16 @@ def train(args, data):
         fold_metrics["mae"].append(mae1)
         fold_metrics["mape"].append(mape1)
         
+        for p in np.unique(labels):
+            
+            
+            mse1,mae1,mape1= general.compute_metrics(predicted_values[labels==p], actual_values[labels==p])
+            
+            results_per_frame[str(p)]["mse"].append(mse1)
+            results_per_frame[str(p)]["mae"].append(mae1)
+            results_per_frame[str(p)]["mape"].append(mape1)
+            
+            
         if fold + 1==args.n_splits:
             mse1= np.mean(fold_metrics["mse"])
             mae1= np.mean(fold_metrics["mae"])

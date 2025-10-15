@@ -14,7 +14,7 @@ from Custom_plots import Custom_plots
 from ModelClass import ModelClass
 
 
-from sklearn.model_selection import KFold
+
 
 from general import general
 

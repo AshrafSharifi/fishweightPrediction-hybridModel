@@ -12,7 +12,7 @@ from datetime import datetime
 from Custom_plots import Custom_plots
 from ModelClass import ModelClass
 from general import general
-from sklearn.model_selection import KFold
+from sklearn.model_selection import TimeSeriesSplit
 @dataclass
 class Args:
     # "LSTM" "LSTM_CNN" "CNN_LSTM" "Parrarel_CNN_LSTM" "Random_Forest"
@@ -31,7 +31,7 @@ class Args:
     scale_flag: bool() = True
     transformFlag: bool() = True
     withTime: bool() = True
-    reducedFeature: bool() = False    
+    reducedFeature: bool() = True    
     root = 'data/Preore_Dataset/'
     path=""
     model_file = ""
@@ -183,7 +183,8 @@ def incremental_train(args, data):
         all_indices =list(range(start_idx,end_idx+1))
         x_all = x[all_indices]
         
-        kfold = KFold(n_splits=args.n_splits, shuffle=True, random_state=23)
+        # kfold = KFold(n_splits=args.n_splits, shuffle=True, random_state=23)
+        kfold = TimeSeriesSplit(n_splits=args.n_splits)
         fold_metrics = {"mse": [],"mae": [],"mape": []}
        
         for fold, (train_index, val_index) in enumerate(kfold.split(x_all)):
@@ -372,7 +373,7 @@ if __name__ == "__main__":
 
         args.run_name = str(args.timesteps)+"_"+args.prediction_Method + "_" + run_name
         args.path = f"data/Runs_IncreamentalLearning/{args.run_name}"
-        args.model_file = args.path + '/fish_weight_prediction_model.hdf5'
+        args.model_file = args.path + '/fish_weight_prediction_model.keras'
         incremental_train(args,data_all)
 
     

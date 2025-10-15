@@ -3,7 +3,6 @@ from tensorflow.keras.callbacks import EarlyStopping
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
 import pickle
 import tyro
 from Custom_plots import Custom_plots 
@@ -11,10 +10,7 @@ from ModelClass import ModelClass
 from dataclasses import dataclass
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import GridSearchCV
-from sklearn.model_selection import KFold
-import shap
+from sklearn.model_selection import TimeSeriesSplit
 from general import general
 
 
@@ -160,7 +156,8 @@ def train(args,original_data):
         data = data_all.drop(["index","Unnamed: 0","Exit_timestamp","observed_timestamp"],axis=1)
         x, reduced_x, y, data_contained_fishWeight = prepare_data(args, data)
         data = data_contained_fishWeight.drop(columns=["mathematical_computed_weight"])
-        kfold = KFold(n_splits=args.n_splits, shuffle=True, random_state=23)
+        # kfold = KFold(n_splits=args.n_splits, shuffle=True, random_state=23)
+        kfold = TimeSeriesSplit(n_splits=args.n_splits)
         fold_metrics = {"mse": [],"mae": [],"mape": []}
         
         testset_dict = dict()
