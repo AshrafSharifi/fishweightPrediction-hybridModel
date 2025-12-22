@@ -1,18 +1,23 @@
 from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.callbacks import EarlyStopping
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns # high-level visualization based on matplotlib
 import pickle
 import tyro
-from Custom_plots import Custom_plots 
-from ModelClass import ModelClass 
 from dataclasses import dataclass
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
-from sklearn.model_selection import TimeSeriesSplit
+from Custom_plots import Custom_plots
+from ModelClass import ModelClass
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import GridSearchCV
 from general import general
-
+import shap
+from sklearn.model_selection import TimeSeriesSplit
+from tensorflow.keras.models import load_model
 
 @dataclass
 class Args:
@@ -22,7 +27,7 @@ class Args:
     
     if prediction_Method!="Random_Forest":
         verbos= 0
-        epochs: int= 150
+        epochs: int= 50
         batch_size: int= 32
         validation_split: float= 0.2
         timesteps: int= 1
@@ -33,94 +38,295 @@ class Args:
         verbose= 0
         scale_flag: bool() = True
         transformFlag: bool() = True
+    else:
+        max_depth: int= 10
+        min_samples_leaf: int= 5
+        min_samples_split: int= 5
+        n_estimators: int= 1000
+        random_state: int= 23
+        scale_flag: bool() = False 
+        transformFlag: bool() = True 
+    
+    
 
-    
-    
-    using_saved_test_set = True   
-    save_test_set = False
-    
-    subset_size: float = 100
     withTime: bool() = True
-    reducedFeature: bool() = False    
+    reducedFeature: bool() = True    
     root = 'data/Preore_Dataset/'
     path=""
     model_file = ""
-    displayCorrMatrix = True
+    displayCorrMatrix = False
     feature_names = []
     # Scalers
     scaler_x = MinMaxScaler()
     time_windows_size = []
     time_windows = []
     run_name=""
-    run_folder="Runs_SubsetData"
+    selected_campagin = 3
+    subset_size = 50 #70, 100
 
 
+def find_best_RF_parameters(x_train,y_train):
+    #Define parameter grid for GridSearch
+    param_grid = {
+        "n_estimators": [100, 500, 1000],
+        "max_depth": [5, 6, 7, 8, 9, 10],
+        "min_samples_split": [5, 10, 25, 50],
+        "min_samples_leaf": [5, 10, 25, 50]
+    }
+    # Initialize Random Forest Regressor
+    rf = RandomForestRegressor(random_state=23)
+    # Initialize Grid Search
+    grid_search = GridSearchCV(estimator=rf, param_grid=param_grid, cv=5, scoring='neg_mean_squared_error', verbose=args.verbos)
+    # Fit the model with GridSearch
+    grid_search.fit(x_train, y_train.ravel())
+    # Retrieve the best model
+    best_rf = grid_search.best_estimator_
+    print("Best Random Forest Parameters:", grid_search.best_params_)
+    return best_rf
 
-
-
+# Log the training and validation metrics to TensorBoard
+def log_metrics(writer, history):
+    for epoch in range(len(history.history['loss'])):
+        writer.add_scalar("Loss/Train", history.history['loss'][epoch], epoch)
+        writer.add_scalar("Loss/Val", history.history['val_loss'][epoch], epoch)
+        writer.add_scalar("MSE/Train", history.history['mse'][epoch], epoch)
+        writer.add_scalar("MSE/Val", history.history['val_mse'][epoch], epoch)
+        writer.add_scalar("MAE/Train", history.history['mae'][epoch], epoch)
+        writer.add_scalar("MAE/Val", history.history['val_mae'][epoch], epoch)
+        writer.add_scalar("MAPE/Train", history.history['mape'][epoch], epoch)
+        writer.add_scalar("MAPE/Val", history.history['val_mape'][epoch], epoch)
+        
 
 def prepare_data(args, data):
     # Drop unwanted columns
     data = data.drop(data.columns[data.columns.str.contains('EXIT')], axis=1)
     data['Entrance_timestamp'] = pd.to_datetime(data['Entrance_timestamp'])
     data = data.drop(["PREORE_VAKI-Length [mm]", "PREORE_VAKI-CF"], axis=1)
-
+    
     # Extract date parts if required
     if args.withTime:
         data['year'] = data['Entrance_timestamp'].dt.year
         data['month'] = data['Entrance_timestamp'].dt.month
         data['day_of_month'] = data['Entrance_timestamp'].dt.day
         data['hour'] = data['Entrance_timestamp'].dt.hour
-
+    
     # Drop the original timestamp column
     data = data.drop(["Entrance_timestamp"], axis=1)
 
-    # Identify columns to remove for reduced feature dataset
-    reduced_columns_to_remove = []
+    # Drop additional columns based on reduced feature flag
     if args.reducedFeature:
-        reduced_columns_to_remove = [
-            "Energy_Acquisition(A)", "Catabolic_component(C)", "Somatic_tissue_energy_content(Epsilon)","I_Ration_Per_SamplingFrequency","Feed_ration"
-        ]
-        
+        data = data.drop(["Energy_Acquisition(A)", "Catabolic_component(C)", "Somatic_tissue_energy_content(Epsilon)","I_Ration_Per_SamplingFrequency"], axis=1)
+    
 
-    # Prepare target (y) and features (x)
+    # Separate target and feature columns
     y = data["PREORE_VAKI-Weight [g]"].values
     x = data.drop(["PREORE_VAKI-Weight [g]", "mathematical_computed_weight"], axis=1)
-
-    # Create reduced feature dataset
-    reduced_x = x.drop(columns=reduced_columns_to_remove, errors='ignore')
-
-    # Save feature names
-    args.feature_names = x.columns.tolist()
-    args.reduced_feature_names = reduced_x.columns.tolist()
+    args.feature_names = x.columns
 
     # Apply transformation to target if flag is set
     if args.transformFlag:
-        y = np.log1p(y)
-
-    # Scale datasets if needed
+        y = np.log1p(y)  # Use log1p for stability
+    
+    # Separate date-related features if scaling is applied
     if args.scale_flag:
         x = args.scaler_x.fit_transform(x)
-        reduced_x = args.scaler_x.fit_transform(reduced_x)
     else:
-        x = x.values
-        reduced_x = reduced_x.values
-
-    return np.array(x), np.array(reduced_x), y, data
-
-
+        x = x.values  # Keep the original values if scaling isn't applied
+    
+    x = np.array(x)
+    return x, y, data
 
 
+def split_data(x,y,data_contained_fishWeight):
+    # Step 1: Train-Test Split
+    indices = np.arange(len(x))
+    x_train, x_test, y_train, y_test, idx_train, idx_test = train_test_split(
+        x, y, indices, test_size=0.2, random_state=23)
+    
+    original_x_test = x_test.copy()
+    original_y_test = y_test.copy()
+    
+    if args.prediction_Method!="Random_Forest": 
+        # Step 2: Reshape to sequences after train-test split
+        samples_train = int(x_train.shape[0] / args.timesteps)
+        x_train = x_train[:samples_train * args.timesteps].reshape(samples_train, args.timesteps, x_train.shape[1])
+        y_train = y_train[:samples_train * args.timesteps].reshape(samples_train, args.timesteps)
+        
+        samples_test = int(x_test.shape[0] / args.timesteps)
+        x_test = x_test[:samples_test * args.timesteps].reshape(samples_test, args.timesteps, x_test.shape[1])
+        y_test = y_test[:samples_test * args.timesteps].reshape(samples_test, args.timesteps)
+    
+    # Step 3: If you need to get back to the original 'Fish_Weight' values
+    Fish_Weight_Predictedby_Math_model = np.array(data_contained_fishWeight.iloc[idx_test]["Fish_Weight"]).reshape(-1,1)
+    data = data_contained_fishWeight.drop(columns=["Fish_Weight"])
+    return x_train, x_test, y_train, y_test,data, Fish_Weight_Predictedby_Math_model, original_x_test, original_y_test
 
 
 
     
+  
+def corr_matrix(data, writer):
+    # Compute the correlation matrix
+    correMtr = data.corr()
+    mask = np.array(correMtr)
+    mask[np.tril_indices_from(mask)] = False  # the correlation matrix is symmetric
+
+    # Prepare the weight correlations for the bar chart
+    weight_corr = correMtr['PREORE_VAKI-Weight [g]'].drop('PREORE_VAKI-Weight [g]').sort_values()
+
+    # Create a figure with 2 subplots (1x2 grid)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(24, 10))
+    
+    # Plot the correlation heatmap on the first axis
+    sns.set_style("white")
+    sns.heatmap(correMtr, mask=mask, vmin=-1.0, vmax=1.0, square=True, annot=True, fmt=".2f", ax=ax1)
+    ax1.set_title('Correlation matrix of attributes')
+    
+    # Plot the vertical bar chart on the second axis
+    sns.barplot(y=weight_corr.index, x=weight_corr.values,hue=weight_corr.index, legend=False, ax=ax2)
+    ax2.set_xlabel("Correlation with PREORE_VAKI-Weight [g]")
+    ax2.set_ylabel("Features")
+    ax2.set_title("Correlation of Features with PREORE_VAKI-Weight [g]")
+    # Adjust layout and show the figure
+    plt.tight_layout()
+    plt.show()
+    # Log the combined figure to TensorBoard
+    writer.add_figure("Combined Correlation Plots", fig)
+    
+def shap_feature_selection(args, best_rf, x_train, writer):
+    # Initialize SHAP TreeExplainer
+    shap_explainer = shap.TreeExplainer(best_rf)
+    shap_importance_train = shap_explainer.shap_values(x_train)
+
+    # Save the summary plot (beeswarm) as an image and add it to TensorBoard
+    fig = plt.figure()
+    shap.summary_plot(shap_importance_train, x_train, feature_names=args.feature_names, show=False)
+    writer.add_figure("SHAP Summary Plot (Beeswarm)", fig)
+    
+
+    # Save the bar plot summary as an image and add it to TensorBoard
+    fig = plt.figure()
+    shap.summary_plot(shap_importance_train, x_train, feature_names=args.feature_names, plot_type="bar", show=False)
+    writer.add_figure("SHAP Summary Plot (Bar)", fig)
+    
+def shap_rnn_feature_importance(model, x_train_3d, args, writer):
+
+    print("Running SHAP KernelExplainer for RNN...")
+    # Flatten for SHAP
+    x_flat = x_train_3d.reshape(x_train_3d.shape[0], -1)
+    
+    # Cluster background for precision
+    bg_size = min(100, x_flat.shape[0])
+    background = x_flat[np.random.choice(x_flat.shape[0], bg_size, replace=False)]
+    
+    # Prediction wrapper
+    def predict_fn(flat_data):
+        data_3d = flat_data.reshape(flat_data.shape[0], args.timesteps, -1)
+        return model.predict(data_3d, verbose=0)
+
+
+    
+    # Use all samples
+    x_sample = x_flat
+    sample_size = x_flat.shape[0]
+    
+    # Run Explainer (auto backend if possible)
+    explainer = shap.Explainer(predict_fn, background, silent=True)
+    shap_values = explainer(x_sample, silent=True)
+    
+    # Convert SHAP values back to 3D
+    shap_3d = shap_values.values.reshape(sample_size, args.timesteps, len(args.feature_names))
+    
+    # Aggregate across timesteps (median for robustness)
+    shap_feature_importance = np.median(shap_3d, axis=1)
+    
+    # Summary plot
+    shap.summary_plot(
+        shap_feature_importance,
+        x_sample,
+        feature_names=args.feature_names,
+        show=True,
+        plot_type="bar"
+    )
+    
+    fig = plt.gcf()
+    writer.add_figure("SHAP_RNN_Feature_Importance", fig)
+    plt.close(fig)
 
 
 
 
 
-def train(args,original_data):
+def train_random_forest(args, data):
+    # Initialize writer and log hyperparameters
+    writer = SummaryWriter(args.path)
+    writer.add_text(
+        "3: Hyperparameters",
+        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()]))
+    )
+
+        
+    # Data preparation and split
+    x, y, data_contained_fishWeight = prepare_data(args, data)
+    x_train, x_test, y_train, y_test, data, Fish_Weight_Predictedby_Math_model, original_x_test, original_y_test = split_data(x, y, data_contained_fishWeight)
+    
+    data = data_contained_fishWeight.drop(columns=["Fish_Weight"])
+    
+    # Log feature names
+    feature_table = "|Features|\n|-|\n"
+    feature_table += "\n".join([f"|{name}|" for name in args.feature_names])
+    writer.add_text("3: Feature Names", feature_table)
+
+
+    if args.displayCorrMatrix:
+        corr_matrix(data,writer)
+    # Model training
+    best_rf = RandomForestRegressor(
+        max_depth=args.max_depth,
+        min_samples_leaf=args.min_samples_leaf,
+        min_samples_split=args.min_samples_split,
+        n_estimators=args.n_estimators,
+        random_state=args.random_state
+    )
+    best_rf.fit(x_train, y_train.ravel())
+    y_pred = best_rf.predict(x_test)
+    actual_value = y_test  
+
+    # Apply transformations if required
+    if args.transformFlag:
+        y_pred, actual_value = np.expm1(y_pred), np.expm1(y_test)
+
+    # Reshape predictions and actual values
+    y_pred, actual_value = y_pred.reshape(-1, 1), actual_value.reshape(-1, 1)
+    Fish_Weight_Predictedby_Math_model = Fish_Weight_Predictedby_Math_model.reshape(-1, 1)
+    # Compute metrics for random forest predictions
+    mse1, mae1, mape1 = general.compute_metrics(y_pred, actual_value)
+    # Plot results for random forest predictions
+    plots = Custom_plots(y_pred, actual_value, writer)
+    plots.plot_all()
+    # Compute metrics for mathematical model predictions
+    mse2, mae2, mape2 = general.compute_metrics(Fish_Weight_Predictedby_Math_model, actual_value)
+    # Log metrics comparison table
+    table = (
+        f"| Metric | {args.prediction_Method} | Method based on mathematical model |\n|-|-|-|\n"
+        f"| MSE   | {mse1:.4f} | {mse2:.4f} |\n"
+        f"| MAE   | {mae1:.4f} | {mae2:.4f} |\n"
+        f"| MAPE  | {mape1:.4f} | {mape2:.4f} |"
+    )
+    writer.add_text("1: Metrics Comparison", table)
+    # Plot results for mathematical model predictions
+    plots = Custom_plots(Fish_Weight_Predictedby_Math_model, actual_value, writer)
+    plots.plot_all()
+    writer.close()
+    shap_feature_selection(args,best_rf,x_train,writer)
+
+def assign_labels(val_index, boundaries):
+    labels = np.zeros_like(val_index, dtype=int)
+    for i, (start, end) in enumerate(boundaries):
+        labels[(val_index >= start) & (val_index <= end)] = i + 1
+    return labels
+
+def train(args, data):
     writer = SummaryWriter(args.path)
     writer.add_text(
         "2: Hyperparameters",
@@ -130,275 +336,202 @@ def train(args,original_data):
     # Convert time window sizes into ranges
     ranges = [0] + args.time_windows_size  # Add a starting point at 0
     ranges = np.cumsum(ranges)
-    boundaries = [(ranges[i], ranges[i+1]-1) for i in range(len(args.time_windows_size))]
-    total_metrics = dict()
+    
+
+    x, y, data_contained_fishWeight = prepare_data(args, data)
+    # x_train, x_test, y_train, y_test,data,Fish_Weight_Predictedby_Math_model, original_x_test, original_y_test= split_data( x, y, data_contained_fishWeight)
+    data = data_contained_fishWeight.drop(columns=["mathematical_computed_weight"])
+    
     feature_table = "|Features|\n|-|\n"
     feature_table += "\n".join([f"|{name}|" for name in args.feature_names])
     writer.add_text("3: Feature Names", feature_table)
+
     
-    total_metrics[str(100)+str(False)] = {"reducedFeature": False,"subset": 100, "mse": 14375.2999, "mae": 76.8485, "mape": 30.3485}
-    total_metrics[str(100)+str(True)] = {"reducedFeature": True,"subset": 100, "mse": 1729.3535, "mae": 20.8545, "mape": 6.7546}
-    for i, subset in enumerate([70,60,50]):
-        args.subset_size = subset
-        if args.subset_size==100:
-            data_all = original_data['data_contextual_weight']
-            if i==-1:
-                args.reducedFeature = True
-                args.save_test_set = True
-                args.using_saved_test_set = False
-            else:
-                args.reducedFeature = False
-                args.save_test_set = False
-                args.using_saved_test_set = True
+    if args.displayCorrMatrix:
+        corr_matrix(data,writer)
+    
+    # kfold = KFold(n_splits=args.n_splits, shuffle=True, random_state=23)
+    tscv = TimeSeriesSplit(n_splits=5)
+    fold_metrics = {"mse": [],"mae": [],"mape": []}
+   
+    
+    
+
+
+
+    
+
+    
+
+    # for fold, (train_index, val_index) in enumerate(kfold.split(x)):
+    for fold, (train_index, val_index) in enumerate(tscv.split(x), start=1):
+        print(f"Training fold {fold + 1}/{args.n_splits}")                                                                
+        x_train, x_val = x[train_index], x[val_index]
+        y_train, y_val = y[train_index], y[val_index]
+        # labels = assign_labels(val_index, boundaries)
+        # train_labels = assign_labels(train_index, boundaries)
+        
+        Fish_Weight_Predictedby_Math_model = np.array(data_contained_fishWeight.iloc[val_index]["mathematical_computed_weight"]).reshape(-1,1)
+        
+        original_x_test = x_val.copy()
+        original_y_test = y_val.copy()
+        
+        # Step 2: Reshape to sequences after train-test split
+        samples_train = int(x_train.shape[0] / args.timesteps)
+        x_train = x_train[:samples_train * args.timesteps].reshape(samples_train, args.timesteps, x_train.shape[1])
+        y_train = y_train[:samples_train * args.timesteps].reshape(samples_train, args.timesteps)
+        
+        samples_test = int(x_val.shape[0] / args.timesteps)
+        x_val = x_val[:samples_test * args.timesteps].reshape(samples_test, args.timesteps, x_val.shape[1])
+        y_val = y_val[:samples_test * args.timesteps].reshape(samples_test, args.timesteps)
+        
+        
+        modelClass = ModelClass(args.timesteps, x_train.shape[2], args.dropout, args.learning_rate)
+        
+        if args.prediction_Method=="LSTM":
+            model = modelClass.create_LSTM()
+        elif args.prediction_Method=="LSTM_CNN":
+            model = modelClass.create_lstm_cnn_model()
+        elif args.prediction_Method=="CNN_LSTM":
+            model = modelClass.create_cnn_lstm_model()
         else:
-            data_all,removed_windows = remove_random_records(args,original_data,'Entrance_timestamp')
-       
-        data = data_all.drop(["index","Unnamed: 0","Exit_timestamp","observed_timestamp"],axis=1)
-        x, reduced_x, y, data_contained_fishWeight = prepare_data(args, data)
-        data = data_contained_fishWeight.drop(columns=["mathematical_computed_weight"])
-        # kfold = KFold(n_splits=args.n_splits, shuffle=True, random_state=23)
-        kfold = TimeSeriesSplit(n_splits=args.n_splits)
-        fold_metrics = {"mse": [],"mae": [],"mape": []}
+            model = modelClass.create_parallel_cnn_lstm_model()
         
-        testset_dict = dict()
-        if args.using_saved_test_set:
-            with open('data/testset.pkl', 'rb') as file:
-                testset_dict = pickle.load(file)
-                
-        for fold, (train_index, val_index) in enumerate(kfold.split(x)):
-            print(f"Training fold {fold + 1}/{args.n_splits}")     
-            x_train, y_train = x[train_index], y[train_index]                                                           
-            x_val, y_val = x[val_index],y[val_index]
-            reduced_x_train, reduced_x_val= reduced_x[train_index],reduced_x[val_index]
-            
-            # Step 2: Reshape to sequences after train-test split
-            samples_train = int(x_train.shape[0] / args.timesteps)
-            x_train = x_train[:samples_train * args.timesteps].reshape(samples_train, args.timesteps, x_train.shape[1])
-            reduced_x_train = reduced_x_train[:samples_train * args.timesteps].reshape(samples_train, args.timesteps, reduced_x_train.shape[1])
-            y_train = y_train[:samples_train * args.timesteps].reshape(samples_train, args.timesteps)
-    
-            
-            
-            if args.using_saved_test_set:
-                original_reduced_x_test = testset_dict[str(fold)]["original_reduced_x_test"]
-                reduced_x_val = testset_dict[str(fold)]["reduced_x_val"] 
-                original_x_test = testset_dict[str(fold)]["original_x_test"]
-                x_val = testset_dict[str(fold)]["x_val"]
-                original_y_test = testset_dict[str(fold)]["original_y_test"]
-                y_val = testset_dict[str(fold)]["y_val"]
-                val_index = testset_dict[str(fold)]["val_index"]
-            else:
-                original_y_test = y_val
-                samples_test = int(x_val.shape[0] / args.timesteps)
-                y_val = y_val[:samples_test * args.timesteps].reshape(samples_test, args.timesteps)
-                original_x_test = x_val
-                original_reduced_x_test = reduced_x_val
-                # Step 2: Reshape to sequences after train-test split
-                x_val = x_val[:samples_test * args.timesteps].reshape(samples_test, args.timesteps, x_val.shape[1])
-                reduced_x_val = reduced_x_val[:samples_test * args.timesteps].reshape(samples_test, args.timesteps, reduced_x_val.shape[1])
-                if args.save_test_set:
-                    testset_dict_item= dict()
-                    testset_dict_item["original_x_test"]=original_x_test
-                    testset_dict_item["original_reduced_x_test"]=original_reduced_x_test
-                    testset_dict_item["original_y_test"]=original_y_test
-                    testset_dict_item["y_val"]=y_val
-                    testset_dict_item["x_val"]=x_val
-                    testset_dict_item["reduced_x_val"]=reduced_x_val 
-                    testset_dict_item["val_index"]=val_index
-                    testset_dict[str(fold)]=testset_dict_item
-                
-
-            labels = general.assign_labels(val_index, boundaries)
-            train_labels = general.assign_labels(train_index, boundaries)
-            # Fish_Weight_Predictedby_Math_model = np.array(data_contained_fishWeight.iloc[val_index]["Fish_Weight"]).reshape(-1,1)
-            if args.reducedFeature:
-                modelClass = ModelClass(args.timesteps, reduced_x_train.shape[2], args.dropout, args.learning_rate)
-                x_train_temp = reduced_x_train
-            else:
-                modelClass = ModelClass(args.timesteps, x_train.shape[2], args.dropout, args.learning_rate)
-                x_train_temp = x_train
-
-                
-            if args.prediction_Method=="LSTM":
-                model = modelClass.create_LSTM()
-            elif args.prediction_Method=="LSTM_CNN":
-                model = modelClass.create_lstm_cnn_model()
-            elif args.prediction_Method=="CNN_LSTM":
-                model = modelClass.create_cnn_lstm_model()
-            else:
-                model = modelClass.create_parallel_cnn_lstm_model()
-            
-            # model = modelClass.create_LSTM()
-             
+        # model = modelClass.create_LSTM()
+         
+        checkpointer = ModelCheckpoint(filepath=args.model_file, save_best_only=True)
+        early_stopping = EarlyStopping(monitor='val_loss', patience=args.patience, restore_best_weights=True)
         
-            early_stopping = EarlyStopping(monitor='val_loss', patience=args.patience, restore_best_weights=True)
-            
+        if fold + 1!=args.n_splits:
             history = model.fit(
-                x_train_temp, y_train, epochs=args.epochs, batch_size=args.batch_size,
+                x_train, y_train, epochs=args.epochs, batch_size=args.batch_size,
                 validation_split=args.validation_split, callbacks=[early_stopping], verbose=args.verbos)
-            
-            if fold + 1 == args.n_splits:
-                general.log_metrics(writer, history)
-                for metric in ['mse', 'mae', 'mape']:
-                    fig, ax = plt.subplots()
-                    ax.plot(history.history[metric], label=f'Training {metric.upper()}')
-                    ax.plot(history.history[f'val_{metric}'], label=f'Validation {metric.upper()}')
-                    ax.set_xlabel('Epochs')
-                    ax.set_ylabel(metric.upper())
-                    ax.legend()
-                    writer.add_figure(f"Training/{metric.upper()}", fig)
-                    plt.close(fig)  
+        else:
+            history = model.fit(
+                x_train, y_train, epochs=args.epochs, batch_size=args.batch_size,
+                validation_split=args.validation_split, callbacks=[checkpointer, early_stopping], verbose=args.verbos)
         
-            # Ensure inputs are 3D by adding a dimension if necessary
-            if args.reducedFeature:
-                if original_reduced_x_test.ndim == 2:
-                    reshaped_inputs = np.tile(original_reduced_x_test[:, np.newaxis, :], (1, args.timesteps, 1))
-                else:  # Already 3D
-                    reshaped_inputs = np.tile(original_reduced_x_test, (1, args.timesteps, 1))
-            else:
-                if original_x_test.ndim == 2:
-                    reshaped_inputs = np.tile(original_x_test[:, np.newaxis, :], (1, args.timesteps, 1))
-                else:  # Already 3D
-                    reshaped_inputs = np.tile(original_x_test, (1, args.timesteps, 1))
+            log_metrics(writer, history)
+            for metric in ['mse', 'mae', 'mape']:
+                fig, ax = plt.subplots()
+                ax.plot(history.history[metric], label=f'Training {metric.upper()}')
+                ax.plot(history.history[f'val_{metric}'], label=f'Validation {metric.upper()}')
+                ax.set_xlabel('Epochs')
+                ax.set_ylabel(metric.upper())
+                ax.legend()
+                writer.add_figure(f"Training/{metric.upper()}", fig)
+                plt.close(fig)  
+    
+
+        # test_results = model.evaluate(x_val, y_val, verbose=args.verbos)
+        
+        # Ensure inputs are 3D by adding a dimension if necessary
+
+        if original_x_test.ndim == 2:
+            reshaped_inputs = np.tile(original_x_test[:, np.newaxis, :], (1, args.timesteps, 1))
+        else:  # Already 3D
+            reshaped_inputs = np.tile(original_x_test, (1, args.timesteps, 1))
+        
+        # Batch prediction
+        y_preds = model.predict(reshaped_inputs, batch_size=32)  # Adjust batch_size for your hardware
+        
+        # Post-process predictions and actual values
+        if args.transformFlag:
+            predicted_values = np.expm1(y_preds[:, 0])  # Transform predicted values
+            actual_values = np.expm1(original_y_test)  # Transform ground truth
+        else:
+            predicted_values = y_preds[:, 0]  # Directly take predictions
+            actual_values = original_y_test  # Directly use ground truth
+        
+        # Reshape to required dimensions
+        predicted_values = predicted_values.reshape(-1, 1)
+        actual_values = actual_values.reshape(-1, 1)
+        
+
+        mse1,mae1,mape1= general.compute_metrics(predicted_values, actual_values)
+        fold_metrics["mse"].append(mse1)
+        fold_metrics["mae"].append(mae1)
+        fold_metrics["mape"].append(mape1)
+        
+
             
-            # Batch prediction
+            
+
+            
+            
+        if fold + 1==args.n_splits:
+            model = load_model(args.model_file)
+            mse1= np.mean(fold_metrics["mse"])
+            mae1= np.mean(fold_metrics["mae"])
+            mape1= np.mean(fold_metrics["mape"])
+
+            title = "Time window: " +str(args.selected_campagin)+ args.time_windows[args.selected_campagin-1] + "  (Train size: "+str(len(train_index))+")"
+            plots = Custom_plots(predicted_values,actual_values,writer=writer,title=title,summarytitle=args.run_name+"(TimeWindow: "+str(args.selected_campagin)+")")
+            plots.plot_all()
+            plt.close(fig)
+            print("*****************************************************************************************")  
+
+            mse2,mae2,mape2= general.compute_metrics(Fish_Weight_Predictedby_Math_model, actual_values)
+            table_header = f"| Metric | {args.prediction_Method} | Method based on mathematical model |\n|-|-|-|"
+            table_rows = f"| MSE   | {mse1:.4f} | {mse2:.4f} |\n"
+            table_rows += f"| MAE   | {mae1:.4f} | {mae2:.4f} |\n"
+            table_rows += f"| MAPE  | {mape1:.4f} | {mape2:.4f} |"
+            table = f"{table_header}\n{table_rows}"
+            writer.add_text("1: Metrics Comparison", table)
+            print(table)
+            
+
+            title = "Method based on mathematical model\nTime window: " +str(args.selected_campagin)+ args.time_windows[args.selected_campagin-1]
+            plots = Custom_plots(Fish_Weight_Predictedby_Math_model,actual_values,writer=writer, title=title, summarytitle="Method based on mathematical model(TimeWindow: "+str(args.selected_campagin)+")")
+            plots.plot_all()
+            plt.close(fig)
+            # plots = Custom_plots(Fish_Weight_Predictedby_Math_model, actual_values,writer,"Method based on mathematical model_")
+            # plots.plot_all()
+            # plt.close(fig)
+            writer.close()
+            
+            
+            
+                        
+            
+            
+            
+            #=======================Save predicted results for all data
+            if original_x_test.ndim == 2:
+                reshaped_inputs = np.tile(x[:, np.newaxis, :], (1, args.timesteps, 1))
+            else:  # Already 3D
+                reshaped_inputs = np.tile(x, (1, args.timesteps, 1))
+            
             y_preds = model.predict(reshaped_inputs, batch_size=32)  # Adjust batch_size for your hardware
             
             # Post-process predictions and actual values
             if args.transformFlag:
                 predicted_values = np.expm1(y_preds[:, 0])  # Transform predicted values
-                actual_values = np.expm1(original_y_test)  # Transform ground truth
+                
             else:
                 predicted_values = y_preds[:, 0]  # Directly take predictions
-                actual_values = original_y_test  # Directly use ground truth
-            
+                
+            plots = Custom_plots(predicted_values,actual_values,writer=writer,title=title,summarytitle=args.run_name+"(TimeWindow: "+str(args.selected_campagin)+")")
+    
             # Reshape to required dimensions
             predicted_values = predicted_values.reshape(-1, 1)
-            actual_values = actual_values.reshape(-1, 1)
-
             
-            mse1,mae1,mape1= general.compute_metrics(predicted_values, actual_values)
-            fold_metrics["mse"].append(mse1)
-            fold_metrics["mae"].append(mae1)
-            fold_metrics["mape"].append(mape1)
+        
             
-            if fold + 1==args.n_splits:
-                mse1= np.mean(fold_metrics["mse"])
-                mae1= np.mean(fold_metrics["mae"])
-                mape1= np.mean(fold_metrics["mape"])
-                for p in np.unique(labels):
-                    title = "Time window: " +str(p)+ args.time_windows[p-1] + "  (Train size: "+str(len(train_labels[train_labels==p]))+")"
-                    plots = Custom_plots(predicted_values[labels==p],actual_values[labels==p],writer=writer,title=title,summarytitle=args.run_name+"(TimeWindow: "+str(p)+")")
-                    plots.plot_all()
-                    plt.close(fig)
-                total_metrics[str(subset)+str(args.reducedFeature)] = {"reducedFeature": args.reducedFeature,"subset": subset, "mse": mse1, "mae": mae1, "mape": mape1}
-        
-        if args.save_test_set:
-            with open('data/testset.pkl', 'wb') as file:
-                pickle.dump(testset_dict, file)            
-    print("*****************************************************************************************")  
-    # Initialize the table header
-    table_header = "| Metric |"
-    table_rows = {"MSE": "| MSE   |", "MAE": "| MAE   |", "MAPE": "| MAPE  |"}
+            with open(args.root + 'results/dynamic_individual_weight.pkl', 'rb') as file:
+                data = pickle.load(file)
+            data['predicted_weight_RNN'] = predicted_values
     
-    # Build the table dynamically
-    for _, metrics in total_metrics.items():
-        subset =  metrics["subset"]
-        table_header += f" {args.prediction_Method}_Training with {subset}% data_ReducedFeatures:{str(metrics['reducedFeature'])} |"
-        # Add the metrics to their respective rows
-        table_rows["MSE"] += f" {metrics['mse']:.4f} |"
-        table_rows["MAE"] += f" {metrics['mae']:.4f} |"
-        table_rows["MAPE"] += f" {metrics['mape']:.4f} |"
-    
-    # Combine the header and rows into a complete table
-    table = f"{table_header}\n|-{''.join(['|-'] * len(total_metrics))}-|\n"
-    table += "\n".join(table_rows.values())
-    
-    # Save or display the table
-    writer.add_text("1: Metrics Comparison", table)
-    
-        # Save the table as text (or log it to a writer, etc.)
-    writer.add_text(f"Metrics for Subset: {subset}", table)
+            
+            # =================== Run SHAP for RNN ==============================
+            # shap_rnn_feature_importance(model, reshaped_inputs, args, writer)
+            
+            
 
-    writer.close()
-
-
-
-def remove_last_records(args,data, timestamp_field='Entrance_timestamp'):
-    """
-    Removes the specified percentage of records dynamically based on time window sizes.
-
-    """
-    
-    time_window_sizes = args.time_windows_size
-    percentage = (100 - args.subset_size)/100
-    
-    
-    if percentage < 0 or percentage > 1:
-        raise ValueError("Percentage must be between 0 and 1.")
-    
-    # Total number of records to remove
-    total_to_remove = int(len(data['data_contextual_weight']) * percentage)
-    
-    # Calculate the number of records to remove from each time window
-    total_size = sum(time_window_sizes)
-    proportions = [size / total_size for size in time_window_sizes]
-    to_remove_per_window = [int(total_to_remove * p) for p in proportions]
-    
-    modified_windows = []
-    for i in range(len(data)-1):
-        window = data[i]['df']
-        window = window.sort_values(by=timestamp_field)
-        modified_windows.append(window.iloc[:-to_remove_per_window[i]])
-    
-
-    
-    # Combine the modified windows back into a single DataFrame
-    remaining_data = pd.concat(modified_windows, ignore_index=True)
-    return remaining_data
-
-
-
-def remove_random_records(args, data, timestamp_field='Entrance_timestamp'):
-  
-    time_window_sizes = args.time_windows_size
-    percentage = (100 - args.subset_size) / 100  # percentage to remove
-    
-    if percentage < 0 or percentage > 1:
-        raise ValueError("Percentage must be between 0 and 1.")
-    
-    # Calculate total number of records to remove
-    total_to_remove = int(len(data['data_contextual_weight']) * percentage)
-    
-    # Calculate the number of records to remove from each time window proportionally
-    total_size = sum(time_window_sizes)
-    proportions = [size / total_size for size in time_window_sizes]
-    to_remove_per_window = [int(total_to_remove * p) for p in proportions]
-    
-    modified_windows = []
-    removed_windows = []
-
-    
-    for i in range(len(data)-1):
-        window = data[i]['df']
-        
-        # Randomly sample and remove rows from the window
-        num_to_remove = to_remove_per_window[i]
-        
-        if num_to_remove > 0:
-            # Randomly select 'num_to_remove' rows to remove
-            rows_to_remove = window.sample(n=num_to_remove, random_state=42)  # Set random_state for reproducibility
-            window = window.drop(rows_to_remove.index)  # Drop the randomly selected rows
-        
-        # Append the modified window to the list
-        modified_windows.append(window)
-        removed_windows.append(rows_to_remove)
-    
-    # Combine the modified windows back into a single DataFrame
-    remaining_data = pd.concat(modified_windows, ignore_index=True)
-    return remaining_data,removed_windows
-
-    
+                
+            
+            
+ 
 
             
 
@@ -409,43 +542,57 @@ if __name__ == "__main__":
     for i in range(len(data)-1):
         args.time_windows_size.append(len(data[i]['df']))
         args.time_windows.append(" (From: "+ str(data[i]['start_date'])+ " - To: "+ str(data[i]['end_date']) + ")\n Sample per day: "+str(data[i]["sampling_rate_per_day"]))
+    # data_all = data['data_contextual_weight']
+    data_all = data[args.selected_campagin-1]['df']
     
-   
-        
-    for i in range(0,1):
-        current_datetime = datetime.now()
-        formatted_datetime = current_datetime.strftime("%Y-%m-%d_%H_%M_%S")
-        
-        # run_name = str(args.subset_size) + "_"
-        run_name = ""
-        if args.reducedFeature:
-            run_name += "ReducedFeature_"
-            
-        if args.transformFlag:
-            run_name += "WithTransform_"
-        else:
-            run_name += "WithoutTransform_"
-            
-        if args.withTime:
-            run_name += "WithTime_"
-        else:
-            run_name += "WithoutTime_"
-            
-        if args.scale_flag:
-            run_name += "WithScaling_"
-        else:
-            run_name += "WithoutScaling_"
-            
-        run_name += f"({formatted_datetime})"
+    
 
+    data_all = data_all.drop(["index","Unnamed: 0","Exit_timestamp","observed_timestamp"],axis=1)
+        
 
+    current_datetime = datetime.now()
+    formatted_datetime = current_datetime.strftime("%Y-%m-%d_%H_%M_%S")
+    
+    run_name = ""
+    if args.reducedFeature:
+        run_name += "ReducedFeature_"
+        
+    if args.transformFlag:
+        run_name += "WithTransform_"
+    else:
+        run_name += "WithoutTransform_"
+        
+    if args.withTime:
+        run_name += "WithTime_"
+    else:
+        run_name += "WithoutTime_"
+        
+    if args.scale_flag:
+        run_name += "WithScaling_"
+    else:
+        run_name += "WithoutScaling_"
+        
+    run_name += f"({formatted_datetime})"
+
+    if args.prediction_Method=="Random_Forest":
+        args.run_name = "RF_" + run_name
+        args.path = f"data/Runs/{args.run_name}"
+        train_random_forest(args, data_all)
+    else:
         args.run_name = str(args.timesteps)+"_"+args.prediction_Method + "_" + run_name
-        args.path = f"data/{args.run_folder}/{args.run_name}"
-        # args.model_file = args.path + '/fish_weight_prediction_model.hdf5'
-        train(args,data)
+        args.path = f"data/Runs/{args.run_name}"
+        args.model_file = args.path + '/fish_weight_prediction_model.keras'
+
+        if args.subset_size == 50:
+            data_all = data_all.iloc[::2]
+        elif args.subset_size == 70:
+            n = len(data_all)
+            idx = np.linspace(0, n - 1, int(n * 0.7), dtype=int)
+            data_all = data_all.iloc[idx]
+
+        train(args,data_all)
 
     
-
 
 
     
