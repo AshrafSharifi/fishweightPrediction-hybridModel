@@ -9,6 +9,24 @@ import pickle
 
 
 
+def initial_weight(VAKI_Size_Weigth):
+    VAKI_Size_Weigth["observed_timestamp"] = pd.to_datetime(VAKI_Size_Weigth["observed_timestamp"])
+
+    # Create day column
+    VAKI_Size_Weigth["day"] = VAKI_Size_Weigth["observed_timestamp"].dt.date
+    
+    # Group by day
+    grouped = VAKI_Size_Weigth.groupby("day")
+    
+    # Take the first group (first day)
+    first_day_df = next(iter(grouped))[1]
+    
+    # Compute median of weight for that day
+    median_first_day = first_day_df["PREORE_VAKI-Weight [g]"].mean()
+    
+    print(median_first_day)
+    
+    return median_first_day
 
 root = 'data/Preore_Dataset/'
 results_path = root + 'results/'
@@ -32,6 +50,8 @@ df_timeWindow.at[0, 'start_date'] = df_Vaki_weights_daily_mean_initial['date'].i
 
 df_timeWindow.at[1, 'start_date'] = '2019-11-15'
 data = dict()
+
+W_vec = [1042,58,251]
 # We use Vaki weights
 for _,time_row in df_timeWindow.iterrows(): 
     rainbow_trout = rainbow_trout_model(time_row.sampling_rate_per_day)
@@ -78,8 +98,10 @@ for _,time_row in df_timeWindow.iterrows():
     
     # =========================================intial weights
     temp = df_Vaki_weights_daily_mean[df_Vaki_weights_daily_mean['date'] == start_date.date()]
-    W0 = temp['PREORE_VAKI-Weight_dailymean [g]'].iloc[0]
+    W0 = initial_weight(VAKI_Size_Weigth)
     
+    print(f"{W0} vs { W_vec[time_row_index]}")
+    # W0 = W_vec[time_row_index]
     # mean_weight = actual_values.mean()
     # std_dev_weight = actual_values.std() 
     # # Step 2: Draw samples from the normal distribution

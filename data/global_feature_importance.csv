@@ -1,0 +1,13 @@
+Feature,Mean_Abs_SHAP
+PREORE_FEM_ENTRANCE-Temp [Â°C],9.44E-05
+Energy_Acquisition(A),6.02E-05
+Catabolic_component(C),5.22E-05
+Feed_ration_3d,4.15E-05
+PREORE_FEM_ENTRANCE-pH,2.77E-05
+Feed_ration,2.67E-05
+Somatic_tissue_energy_content(Epsilon),6.08E-06
+PREORE_FEM_ENTRANCE-ODO [mg/L],2.91E-06
+PREORE_FEM_ENTRANCE-Cond [ÂµS/cm],1.45E-06
+PREORE_FEM_ENTRANCE-NH4+ [mg/L],0
+PREORE_FEM_ENTRANCE-NO3 -N [mg/L],0
+PREORE_FEM_ENTRANCE-Sal [psu],8.37E-06

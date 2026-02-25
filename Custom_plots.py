@@ -1,20 +1,49 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+import pandas as pd
+import matplotlib.dates as mdates
+
 
 class Custom_plots:
-    def __init__(self, predicted_values, actual_values, writer=None, title="", summarytitle=""):
+    def __init__(self, predicted_values, actual_values, writer=None, title="", summarytitle="", times = ""):
         self.actual_values = actual_values
         self.predicted_values = predicted_values
         self.writer = writer
         self.title = title
         self.summarytitle = summarytitle
+        if times != "":
+            self.times = pd.to_datetime(times)
+        else:
+            self.times = ""
+        
+    def plot_manual_data(self):
+        plt.figure(figsize=(10, 6))
+        
+        plt.plot(self.times, self.actual_values,
+                 label="Actual Values",
+                 color="blue",
+                 alpha=0.6,
+                 linewidth=2)
+    
+        plt.xlabel("Time", fontsize=14)
+        plt.ylabel("Fish weight (g)", fontsize=14)
+    
+        ax = plt.gca()
+        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d %H:%M'))
+        plt.xticks(rotation=45)
+    
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
 
     def plot_predictions(self):
         plt.figure(figsize=(10, 6))
         plt.plot(self.actual_values, label="Actual Values", color="blue", alpha=0.6, linewidth=2)
         plt.plot(self.predicted_values, label="Predicted Values", color="orange", linestyle="--", alpha=0.7)
-        plt.xlabel("Index of Test Samples", fontsize=14)
+        plt.xlabel("Time (Day)", fontsize=14)
         plt.ylabel("Actual Fish weights", fontsize=14)
         plt.title("Predicted vs Actual Values", fontsize=14, fontweight="bold")
         plt.legend()
@@ -60,6 +89,8 @@ class Custom_plots:
         self.plot_actual_vs_predicted_scatter()
         self.plot_residuals()
         self.plot_predictions_with_hist()
+        if self.times != "":
+            self.plot_manual_data()
 
 
 

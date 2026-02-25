@@ -14,17 +14,28 @@ class ModelClass:
       
     def create_LSTM(self):
         model = Sequential()
-        model.add(Bidirectional(LSTM(units=256, return_sequences=True, input_shape=(self.timesteps, self.feature_size))))
+    
+        # Explicit Input layer (correct way)
+        model.add(Input(shape=(self.timesteps, self.feature_size)))
+    
+        model.add(Bidirectional(LSTM(units=256, return_sequences=True)))
         model.add(Dropout(self.dropout))
+    
         model.add(Bidirectional(LSTM(units=128, return_sequences=True)))
         model.add(Dropout(self.dropout))
+    
         model.add(Bidirectional(LSTM(units=64, return_sequences=False)))
         model.add(Dropout(self.dropout))
+    
         model.add(Dense(units=1))
+    
         custom_optimizer = Adam(learning_rate=self.learning_rate)
-        model.compile(optimizer=custom_optimizer, loss='mean_squared_error', metrics=['mape', 'mae', 'mse'])
-        model.build((None, self.timesteps, self.feature_size))  # Here, you specify the input shape
-        # utils.plot_model(model, to_file="data/models/lstm.pdf", show_shapes=True)
+        model.compile(
+            optimizer=custom_optimizer,
+            loss='mean_squared_error',
+            metrics=['mape', 'mae', 'mse']
+        )
+    
         return model
     
     def create_lstm_cnn_model(self):
@@ -56,7 +67,7 @@ class ModelClass:
         # Print the model summary to check the shapes
         # model.summary()
         # model.build((None, self.timesteps, self.feature_size))  # Here, you specify the input shape
-        utils.plot_model(model, to_file="data/models/lstm_cnn.pdf", show_shapes=True)
+        # utils.plot_model(model, to_file="data/models/lstm_cnn.pdf", show_shapes=True)
         return model
     
     def create_cnn_lstm_model(self):

@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 import seaborn as sns
-
+from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error,mean_absolute_error
 class general:
     
     def interpolate_outliers(weights, label,show_plot = False):
@@ -58,30 +58,25 @@ class general:
 
 
     
-    def compute_metrics(predicted_values, actual_values):
+    def compute_metrics(predicted_values, actual_values, print_res = 1):
         # Convert inputs to numpy arrays for safety
         predicted_values = np.array(predicted_values)
         actual_values = np.array(actual_values)
         
         # Calculate MSE
-        mse = np.mean((predicted_values - actual_values) ** 2)
+        mse = mean_squared_error(actual_values,predicted_values)
         
         # Calculate MAE
-        mae = np.mean(np.abs(predicted_values - actual_values))
+        mae = mean_absolute_error(actual_values,predicted_values)
         
-        # Calculate MAPE (handling division by zero)
-        # Use np.where to avoid division by zero
-        non_zero_actuals = np.where(actual_values == 0, np.nan, actual_values)
-        mape = np.mean(np.abs((actual_values - predicted_values) / non_zero_actuals)) * 100
+        mape = mean_absolute_percentage_error(actual_values,predicted_values)
         
-        # Replace NaNs with a large value or skip them as appropriate
-        if np.isnan(mape):
-            mape = float('inf')  # Assign infinity if MAPE is undefined
-        
-        # Print the results
-        print(f"MSE: {mse}")
-        print(f"MAE: {mae}")
-        print(f"MAPE: {mape}%")
+       
+        if print_res == 1:
+            # Print the results
+            print(f"MSE: {mse}")
+            print(f"MAE: {mae}")
+            print(f"MAPE: {mape}%")
         
         return mse, mae, mape
     
